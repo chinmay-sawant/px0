@@ -3519,6 +3519,7 @@
     });
     addEventListener("keydown", (e) => {
       const mod = e[MOD];
+      const alt = e.altKey && (!mod || e.getModifierState && e.getModifierState("AltGraph"));
       if (e.key === "Escape") {
         if (!overlay.hidden) {
           closePalette();
@@ -3604,14 +3605,14 @@
         render();
         return;
       }
-      if (mod && (e.key === "w" || e.key === "W") || e.altKey && e.code === "KeyW") {
+      if (mod && (e.key === "w" || e.key === "W") || alt && e.code === "KeyW") {
         e.preventDefault();
         e.stopPropagation();
         if (S2.active >= 0)
           closeTab(S2.active);
         return;
       }
-      if (e.altKey && e.shiftKey && !mod && e.code === "KeyT") {
+      if (alt && e.shiftKey && e.code === "KeyT") {
         e.preventDefault();
         reopenClosedTab();
         return;
@@ -3640,31 +3641,31 @@
           switchTab((S2.active + (e.shiftKey ? -1 : 1) + S2.tabs.length) % S2.tabs.length);
         return;
       }
-      if (e.altKey && e.shiftKey && e.code === "KeyH") {
+      if (alt && e.shiftKey && e.code === "KeyH") {
         e.preventDefault();
         showCalls();
         return;
       }
-      if (e.altKey && !mod && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) {
+      if (alt && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) {
         e.preventDefault();
         switchTab(+e.code.slice(5) - 1);
         return;
       }
-      if (e.altKey && !mod && !e.shiftKey && SEL_KEYS[e.code] && runSelectionAction(SEL_KEYS[e.code])) {
+      if (alt && !e.shiftKey && SEL_KEYS[e.code] && runSelectionAction(SEL_KEYS[e.code])) {
         e.preventDefault();
         return;
       }
-      if (e.altKey && e.code === "KeyZ") {
+      if (alt && e.code === "KeyZ") {
         e.preventDefault();
         toggleWordWrap();
         return;
       }
-      if (e.altKey && e.code === "KeyL") {
+      if (alt && e.code === "KeyL") {
         e.preventDefault();
         toggleLineNumbers();
         return;
       }
-      if (e.altKey && !mod && !e.shiftKey && e.code === "KeyM") {
+      if (alt && !e.shiftKey && e.code === "KeyM") {
         e.preventDefault();
         togglePreview();
         return;
