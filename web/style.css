@@ -457,9 +457,21 @@ body.hide-lines .c { padding-left: 16px; }
 .md-alert-caution { --alert: var(--err); }
 .md blockquote.md-alert { padding: 8px 16px; color: var(--fg); border-left-color: var(--alert); }
 .md .md-alert-title { margin: 0 0 4px; font-weight: 600; color: var(--alert); }
-/* Mermaid diagrams: wrappers minted by web/src/mermaid.js once a fence renders. */
-.md .md-mermaid { margin: 0 0 16px; text-align: center; }
-.md .md-mermaid svg { max-width: 100%; height: auto; }
+/* Mermaid diagrams: the card web/src/mermaid.js mints once a fence renders. */
+.md .md-mermaid { margin: 0 0 16px; }
+.md .mm-card { overflow: hidden; background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; }
+.md .mm-bar { display: flex; align-items: center; padding: 4px 6px 4px 10px; border-bottom: 1px solid var(--line); }
+.md .mm-label { font: 10.5px/1 var(--mono); letter-spacing: .04em; color: var(--faint); text-transform: uppercase; }
+.md .mm-zoom { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.md .mm-btn, .md .mm-pct { border: 0; padding: 0; color: var(--dim); background: none; border-radius: 4px; cursor: pointer; }
+.md .mm-btn { width: 22px; height: 22px; font-size: 14px; line-height: 1; }
+.md .mm-pct { height: 22px; padding: 0 7px; font: 10.5px/1 var(--mono); }
+.md .mm-btn:hover, .md .mm-pct:hover { color: var(--fg); background: var(--bg3); }
+.md .mm-view { overflow: auto; cursor: grab; overscroll-behavior: contain; }
+.md .mm-view.dragging { cursor: grabbing; }
+/* max-content plus min-width keeps a small diagram centred and a zoomed one scrollable. */
+.md .mm-stage { display: flex; align-items: center; justify-content: center; width: max-content; min-width: 100%; min-height: 120px; padding: 14px; box-sizing: border-box; }
+.md .mm-view svg { display: block; }
 
 #imgview { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; padding: 32px; }
 #imgview img { max-width: 100%; image-rendering: pixelated; box-shadow: var(--shadow); background: repeating-conic-gradient(var(--bg3) 0 25%, transparent 0 50%) 0 0/16px 16px; }

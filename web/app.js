@@ -2192,8 +2192,97 @@
     }
     if (!target.isConnected)
       return;
-    target.innerHTML = svg;
+    mountDiagram(target, svg);
     rendered.add(target);
+  }
+  var MM_MIN = 0.25;
+  var MM_MAX = 4;
+  var MM_STEP = 1.25;
+  function mountDiagram(target, svgText) {
+    const view = document.createElement("div");
+    view.className = "mm-view";
+    const stage = document.createElement("div");
+    stage.className = "mm-stage";
+    stage.innerHTML = svgText;
+    view.append(stage);
+    const svg = stage.querySelector("svg");
+    const box = svg && svg.viewBox ? svg.viewBox.baseVal : null;
+    const w = box && box.width ? box.width : 0;
+    const h = box && box.height ? box.height : 0;
+    if (svg && w && h) {
+      svg.removeAttribute("style");
+      svg.style.maxWidth = "none";
+    }
+    const bar = document.createElement("div");
+    bar.className = "mm-bar";
+    const label = document.createElement("span");
+    label.className = "mm-label";
+    label.textContent = "mermaid";
+    const zoom = document.createElement("div");
+    zoom.className = "mm-zoom";
+    const pct = document.createElement("button");
+    pct.type = "button";
+    pct.className = "mm-pct";
+    pct.title = "Reset zoom to fit";
+    pct.setAttribute("aria-label", "Reset zoom to fit");
+    const mkBtn = (text, title, on) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mm-btn";
+      b.textContent = text;
+      b.title = title;
+      b.setAttribute("aria-label", title);
+      b.addEventListener("click", on);
+      return b;
+    };
+    const fit = () => w && view.clientWidth ? Math.min(1, (view.clientWidth - 28) / w) : 1;
+    let z = 1;
+    const apply = (next) => {
+      z = Math.min(MM_MAX, Math.max(MM_MIN, next));
+      target.dataset.zoom = String(z);
+      if (svg && w && h) {
+        svg.setAttribute("width", String(Math.round(w * z)));
+        svg.setAttribute("height", String(Math.round(h * z)));
+      }
+      pct.textContent = Math.round(z * 100) + "%";
+    };
+    zoom.append(mkBtn("−", "Zoom out", () => apply(z / MM_STEP)), pct, mkBtn("+", "Zoom in", () => apply(z * MM_STEP)));
+    pct.addEventListener("click", () => apply(fit()));
+    bar.append(label, zoom);
+    const card = document.createElement("div");
+    card.className = "mm-card";
+    card.append(bar, view);
+    target.replaceChildren(card);
+    apply(Number(target.dataset.zoom) || fit());
+    view.addEventListener("wheel", (e) => {
+      if (!e.ctrlKey && !e.metaKey)
+        return;
+      e.preventDefault();
+      apply(z * (e.deltaY < 0 ? MM_STEP : 1 / MM_STEP));
+    }, { passive: false });
+    let pan = null;
+    view.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0)
+        return;
+      if (e.target !== view)
+        e.preventDefault();
+      pan = { x: e.clientX, y: e.clientY, l: view.scrollLeft, t: view.scrollTop };
+      view.classList.add("dragging");
+      if (view.setPointerCapture)
+        view.setPointerCapture(e.pointerId);
+    });
+    view.addEventListener("pointermove", (e) => {
+      if (!pan)
+        return;
+      view.scrollLeft = pan.l - (e.clientX - pan.x);
+      view.scrollTop = pan.t - (e.clientY - pan.y);
+    });
+    const endPan = () => {
+      pan = null;
+      view.classList.remove("dragging");
+    };
+    view.addEventListener("pointerup", endPan);
+    view.addEventListener("pointercancel", endPan);
   }
   function watchTheme() {
     if (themeWatcher)
