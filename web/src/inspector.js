@@ -2,7 +2,8 @@
 import { $, $$, esc, doc_, api } from './state.js';
 import { layout, render } from './renderer.js';
 import { updateStatus, setStatusNote } from './status.js';
-import { openFile, gotoLine } from './tabs.js';
+import { openFile, centerLine } from './tabs.js';
+import { pushHistory } from './history.js';
 import { loadOutline, drawOutline } from './outline.js';
 import { displayPath } from './search.js';
 import { groupHits, flashFind, canAskServer, lspCall, positionNow } from './lsp.js';
@@ -140,7 +141,12 @@ export function initInspector() {
     if (!s) return;
     $$('#right-symbols-list .sym.sel, #outline .sym.sel').forEach(x => x.classList.remove('sel'));
     s.classList.add('sel');
-    gotoLine(+s.dataset.n);
+    const d = doc_(); if (!d) return;
+    d.cur = +s.dataset.n;
+    centerLine(d.cur);
+    render();
+    updateStatus();
+    pushHistory(d.path, d.cur);
   });
   $('#right-symbols-filter')?.addEventListener('input', drawOutline);
 
@@ -159,7 +165,7 @@ export function initInspector() {
     if (r) {
       $$('#right-refs-list .rline.sel').forEach(x => x.classList.remove('sel'));
       r.classList.add('sel');
-      openFile(r.dataset.p, { line: +r.dataset.n, source: true });
+      openFile(r.dataset.p, { line: +r.dataset.n });
       const targetEl = $('#right-ref-target');
       if (targetEl && targetEl.textContent) flashFind(targetEl.textContent);
     }

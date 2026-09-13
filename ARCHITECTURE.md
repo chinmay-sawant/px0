@@ -4,7 +4,7 @@ This document outlines the high-level architecture and key performance optimizat
 
 ## High-Level Architecture
 
-px0 is structured as an ultra-lightweight, zero-config, read-only code reader and navigator packaged as a single statically linked binary (~15 MB).
+px0 is structured as an ultra-lightweight, zero-config, read-only code reader and navigator packaged as a single statically linked binary (~9.5 MB).
 
 ```mermaid
 flowchart TD
@@ -27,7 +27,7 @@ flowchart TD
         Files["Source Files / .gitignore"]
     end
 
-    Browser <-->|"HTTP / JSON (Gzip)"| Server
+    Browser <-->|HTTP / JSON (Gzip)| Server
     Server --> IndexEngine
     Server --> SearchEngine
     Server --> HLEngine
@@ -40,13 +40,14 @@ flowchart TD
 
 ### Core Components
 
-1. Single Binary Distribution (`main.go`): Embeds the web UI (HTML, CSS, JS) and the vendored Mermaid ESM build (~3.5 MB) via `go:embed`. Runs with no runtime dependencies, no CGO, no node_modules.
+1. Single Binary Distribution (`main.go`): Embeds the web UI (HTML, CSS, JS ~74 KB) and the vendored Mermaid ESM build (~3.7 MB) via `go:embed`. Runs with no runtime dependencies, no CGO, no node_modules.
 2. In-Memory Path Index (`index.go`): Collects and maintains file paths, directory trees, and basenames in compact structures for instant path resolution and fuzzy lookups.
 3. Optimized Ignore Engine (`ignore.go`): Fast multi-level `.gitignore` evaluator using classification-based matching without regex backtracking where possible.
 4. Windowed Syntax Highlighting Engine (`highlight.go`): Slotted file reader and Chroma tokenizer that works on viewport windows rather than entire multi-megabyte files.
 5. Parallel Search Engine (`search.go`): Multi-core worker pool utilizing custom buffer reuse, SIMD/Boyer-Moore-backed literal search, and line-level fast elision.
 6. Lazy LSP Manager (`lsp.go`, `lspnav.go`, `lspservers.go`, `lspsetup.go`, `calls.go`): Dynamic lifecycle controller that spawns language servers only upon first request for that language, automatically falling back to regex definitions when LSP is inactive. Discovery looks on `PATH` and in common install folders (`~/go/bin`, `~/.cargo/bin`, `~/.local/bin`, npm's global bin, Homebrew's llvm) and can run again at any time. When a file type has no server, `lspsetup.go` reports the registry's install recipes for the current OS, runs a user-level one in the background on request, then rescans and starts the server. The install and start endpoints accept only a POST whose `Origin` matches its `Host`, and only when that host is an IP address or `localhost`, so neither another site nor a DNS-rebinding domain can trigger an install; the command itself always comes from the registry, never from the request.
 7. DOM Virtualization Frontend (`web/app.js`): Custom ~60-row DOM virtualization with offscreen canvas text measuring and `requestAnimationFrame` render throttling.
+8. Markdown Preview (`markdown.go`, `web/src/markdown.js`): Renders `.md` and `.markdown` files with goldmark for a preview that opens by default and switches to the source with the Preview / Source control in the tab bar or Alt+M. See Markdown Preview below.
 
 ## Key Performance Optimizations
 
@@ -66,15 +67,6 @@ flowchart TD
 - Dual-Tier Processing with Background Exact Pass: For files under `bgLimit = 2 MB`, after serving the initial viewport chunk instantly, a background goroutine finishes exact tokenization and transitions subsequent chunks to instant map lookups.
 - LRU Highlight Memory Budget (`cacheBudget = 512 MB`): Highlight caches track the byte size of generated HTML strings and evict using an LRU linked list (`container/list`) when reaching the 512 MB threshold.
 - Short Class Token Mapping: Token types are mapped to compact 1-2 character CSS classes (`c` for comment, `k` for keyword, `s` for string), shrinking payload sizes over the wire.
-
-### Rendered Markdown Preview and Mermaid Diagrams
-
-- Render Path (`GET /api/md`, `md.go`): `handleMD` reads one `.md`/`.markdown` file and renders it with a shared goldmark instance (GFM extensions plus auto heading IDs), returning `{path, size, html}`. goldmark's defaults are the safe ones: raw HTML is dropped and `javascript:`/`data:` destinations are emptied, so the fragment needs no client-side sanitiser. Fenced code blocks render through `highlightSource()` (`highlight.go`) in the same compact token classes as file source, so preview fences are styled by every theme and Chroma stays the only highlighting stack; `language-mermaid` fences are escaped without lexing, since that class is the diagram loader's hook.
-- Bounded Whole-File Render (`mdRenderMaxBytes = 2 MB`): a preview renders the whole document in one pass, so the O(1)-open guarantee is deliberately traded for a bounded, user-initiated cost. Larger files are refused with a 413 and an "open as source" message rather than truncated.
-- Render Cache (`mdRenderCache`): rendered fragments are memoised in an LRU keyed on absolute path plus mtime and size, so an edited file misses and a reopened one hits. `mdRenderCacheBudget = 64 MB` bounds the fragments kept, and `/api/close` drops every rendering of the closed path alongside the highlight cache entry and the LSP document.
-- Per-Tab Mode (`web/src/md.js`, `web/src/tabs.js`): every tab carries `mode: 'source' | 'preview'`; the footer Preview button, `Alt+M`, and the command palette toggle it, and only an explicit toggle persists the choice (`px0.mdPreview`, on by default, seeds the next `.md` open). One `#mdview` container sits beside `#viewport`; each tab keeps its own injected body and scroll, so switching tabs is instant and never re-runs Mermaid. Jumps to a line or heading leave preview for source at the target line instead of no-opping.
-- Immutable Vendored Assets (`/static/lib/`): `ServeHTTP` exempts the vendored tree from the global `Cache-Control: no-store` with `public, max-age=31536000, immutable`, so multi-megabyte assets are fetched once per browser rather than on every page load; every other response stays no-store.
-- Lazy Mermaid (`web/src/mermaid.js`, `scripts/vendor-mermaid.sh`): Mermaid 11.17.2 is vendored offline under `web/lib/mermaid/11.17.2/` (sha256-verified tarball; ESM entry plus chunks, no source maps), and the bundled `web/app.js` carries only the loader, not the library. After a rendered preview appears, the loader dynamically imports the entry with a computed URL only when the preview contains `pre > code.language-mermaid`, so a document without diagrams downloads no Mermaid bytes. Blocks render one at a time through an `IntersectionObserver` under Mermaid's `strict` security level, capped at 50 diagrams per preview and 2,000 characters per block; rendering is theme-aware (config rebuilt from computed CSS tokens on `data-theme` changes), and any parse, render, or import failure restores the original source block with a short inline note.
 
 ### Search Engine
 
@@ -102,7 +94,16 @@ flowchart TD
 - Localized DOM Decorations: Match highlights, bracket markers, and occurrences are applied only to active rows, ensuring highlighting stays within a sub-millisecond frame budget.
 - Overlay Caret: The read-only caret is a single element in `#sizer`, not a node inside the code rows. After each paint (and directly on click, without a repaint that would break a drag-selection) `placeCaret()` measures a collapsed DOM Range at the line/column and translates the caret there. Keeping it out of the rows leaves their text nodes untouched for selection restore and word lookup.
 - Selection Preservation: Every paint replaces the rows' markup, which would drop the browser's text selection (pressing Ctrl for link underlines, a double-click, or a background highlight refresh all repaint). `paint()` saves the selection as line/column positions before rewriting rows and restores it afterwards, so native copy (Ctrl/Cmd+C) keeps working. A selection whose endpoints scroll outside the rendered window is not restored.
-- Whole-File Selection: Ctrl/Cmd+A outside a text field never uses the browser's select-all, which would take the sidebar and status bar and, with virtualized rows, only the rendered part of the file. `selectAll()` sets `S.selAll` to the active doc instead; `paint()` shades the code of every rendered row, the file's text is fetched once from `/api/raw` for Ctrl/Cmd+C and the status bar actions, and a click, Esc or tab change clears it. A rendered Markdown preview is the exception: `shortcuts.js` leaves Mod+A and Mod+C to the browser there, so the rendered document selects and copies natively.
+- Whole-File Selection: Ctrl/Cmd+A outside a text field never uses the browser's select-all, which would take the sidebar and status bar and, with virtualized rows, only the rendered part of the file. `selectAll()` sets `S.selAll` to the active doc instead; `paint()` shades the code of every rendered row, the file's text is fetched once from `/api/raw` for Ctrl/Cmd+C and the status bar actions, and a click, Esc or tab change clears it.
+
+### Markdown Preview
+
+- Stateless Server Render: `/api/markdown` converts the whole file on each request with goldmark (GitHub Flavored Markdown tables, task lists, strikethrough and autolinks, plus footnotes) and caches nothing. Files over 4 MB (`maxMarkdownBytes`) are refused and the tab falls back to its source view.
+- One Highlighter: Fenced code goes through the code view's Chroma lexers and `classFor` token classes (`highlightLines`), so a theme colours both. Unlabelled fences and fences over 256 KB (`maxFenceBytes`) stay plain, because guessing a language from content is slow and often wrong.
+- Lazy Mermaid Diagrams (`web/src/mermaid.js`, `scripts/vendor-mermaid.sh`): a fence marked `mermaid` carries `data-lang="mermaid"` and is swapped for a diagram wrapper by the loader. Chroma has no Mermaid lexer, so the server leaves that fence as escaped source; the client gets it verbatim. Mermaid 11.17.2 is vendored offline under `web/lib/mermaid/11.17.2/` (sha256-verified tarball, ESM entry plus chunks, no source maps) and is not part of `web/app.js`: the loader dynamically imports it with a computed URL only when a preview contains a diagram fence, so a document without diagrams downloads no Mermaid bytes, and the immutable `/static/lib/` cache header keeps the multi-megabyte import to one fetch per browser. Diagrams render one at a time through an `IntersectionObserver` under Mermaid's `strict` security level, capped at 50 per preview and 2,000 source characters per block; rendering is theme-aware (config rebuilt from computed CSS tokens on `data-theme` changes), and any parse, render, or import failure restores the original source block with a short inline note.
+- Source Line Anchors: An AST transformer (`lineMarker`) writes `data-line` on headings, paragraphs, lists, list items, blockquotes, code blocks and tables. Line-based navigation (outline, go to line, search hits, history, `openFile` with a line) lands on the block holding that line, and switching between preview and source keeps the reader at the same block. Heading ids follow GitHub's rules (`headingIDs`), so tables of contents written for GitHub work.
+- Sanitised in the Browser: goldmark passes raw HTML through, because READMEs rely on it for centred logos and `<details>`. The preview runs on px0's own origin, which also serves the language server install endpoints, so `web/src/markdown.js` treats the response as untrusted. It parses the HTML into an inert `DOMParser` document, removes script-capable elements (`script`, `style`, `iframe`, `svg`, `math`, forms, media) with their content, unwraps elements not on an allowlist, and keeps only attributes that can neither run script nor load anything. Classes survive only for footnotes and highlighter tokens, and every `id` gets an `md-` prefix so a heading called "status" cannot shadow `#status`. Links keep an href only for `http`, `https` and `mailto`; images load only `http`, `https` and `data:image`. Schemes are tested after removing the tabs and newlines the URL parser ignores. A reference without a scheme resolves against the file's directory (a leading `/` means the workspace root, as on GitHub): images load through `/api/raw`, links open the file in px0 (`#L12` lands on a line), and folder links reveal the folder in the explorer. Only the cleaned nodes are adopted into the page.
+- Overlay, Not Replacement: `#mdview` covers `#viewport`, which keeps its rows, so switching to the source is instant. The choice persists in `localStorage` under `px0.mdPreview`. Find in file (Ctrl+F) searches the preview's rendered text in the page, marking matches with the code view's text-node walker.
 
 ### Typography, Reading Themes, and Universal Search
 

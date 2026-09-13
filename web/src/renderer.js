@@ -1,5 +1,5 @@
 // web/src/renderer.js
-import { $, S, doc_, api, isMarkdown, LH, CHUNK, OVERSCAN } from './state.js';
+import { $, S, doc_, api, LH, CHUNK, OVERSCAN } from './state.js';
 import { vp, sizer, rowsEl, editor } from './ui.js';
 
 export function measure() {
@@ -10,7 +10,7 @@ export function measure() {
 
 export function layout() {
   const d = doc_();
-  if (!d || d.mode === 'preview') return;
+  if (!d) return;
   const digits = String(d.total).length;
   editor.style.setProperty('--gw', digits);
   const gutter = S.lineNumbers ? (digits * S.chW + 30) : 16;
@@ -43,27 +43,17 @@ export function updateEditorOptionControls() {
   if (wrapBtn) wrapBtn.classList.toggle('active', !!S.wrap);
   const linesBtn = $('[data-action="line-numbers"]');
   if (linesBtn) linesBtn.classList.toggle('active', !!S.lineNumbers);
-  // The preview toggle only exists for Markdown files; hidden, not disabled,
-  // so it costs no status-bar width elsewhere.
-  const mdBtn = $('[data-action="preview"]');
-  if (mdBtn) {
-    const d = doc_();
-    const md = !!d && isMarkdown(d.path);
-    mdBtn.hidden = !md;
-    mdBtn.classList.toggle('active', md && d.mode === 'preview');
-  }
 }
 
 let raf = 0;
 export function render() {
-  if (doc_()?.mode === 'preview') return;
   if (raf) return;
   raf = requestAnimationFrame(() => { raf = 0; paint(); });
 }
 
 export function paint() {
   const d = doc_();
-  if (!d || d.mode === 'preview') { const c = $('#caret'); if (c) c.hidden = true; return; }
+  if (!d) { const c = $('#caret'); if (c) c.hidden = true; return; }
   const top = vp.scrollTop;
   const first = Math.max(0, Math.floor(top / LH) - OVERSCAN);
   const count = Math.ceil(vp.clientHeight / LH) + OVERSCAN * 2;
@@ -276,7 +266,6 @@ export function rowFor(line) {
 }
 
 export function ensureChunks(d, first, last) {
-  if (!d || d.mode === 'preview') return;
   const c0 = Math.floor(first / CHUNK), c1 = Math.floor(Math.max(first, last - 1) / CHUNK);
   for (let c = c0; c <= c1; c++) {
     if (d.chunks.has(c) || d.pending.has(c)) continue;

@@ -1,9 +1,9 @@
 // web/src/mermaid.js
 // Lazy Mermaid rendering for Markdown previews. The vendored ESM build in
 // web/lib/mermaid/ (see scripts/vendor-mermaid.sh) is imported only after a
-// rendered document is found to contain `pre > code.language-mermaid`, so a
-// preview without diagrams never fetches or parses it. Theme variables are
-// read from the tokens documented in STYLING.md at initialize time.
+// rendered document is found to contain a diagram fence, so a preview without
+// diagrams never fetches or parses it. Theme variables are read from the
+// tokens documented in STYLING.md at initialize time.
 
 /* Keep in lockstep with scripts/vendor-mermaid.sh. The version directory keeps
    the immutable /static/lib/ caching safe across Mermaid upgrades. */
@@ -13,6 +13,10 @@ const MERMAID_URL = '/static/lib/mermaid/' + MERMAID_VERSION + '/mermaid.esm.min
 /* Hard caps: over-cap blocks stay readable as source with a short note. */
 const MAX_BLOCKS = 50;
 const MAX_CHARS = 2000;
+
+/* The server marks a diagram fence with data-lang, and the preview sanitizer
+   keeps that attribute; the code element itself carries no class by then. */
+const MD_MERMAID = 'pre[data-lang="mermaid"] > code';
 
 let mermaidPromise = null;           // in-flight/finished import: mermaid loads once
 let mermaidModule = null;            // resolved module, for theme re-initialize
@@ -190,8 +194,9 @@ async function parseDetail(mermaid, src) {
 /* Rebuild the server's block shape when the original node is gone. */
 function sourceBlock(src) {
   const pre = document.createElement('pre');
+  pre.className = 'md-code';
+  pre.dataset.lang = 'mermaid';
   const code = document.createElement('code');
-  code.className = 'language-mermaid';
   code.textContent = src;
   pre.appendChild(code);
   return pre;
@@ -200,21 +205,15 @@ function sourceBlock(src) {
 /* Put the block back exactly as the server rendered it and say what happened;
    a diagram must never vanish or blank because mermaid could not draw it. */
 function fail(target, src, err) {
-  if (target.tagName !== 'PRE') {
-    rendered.delete(target);
-    const original = snapshots.get(target) || sourceBlock(src);
-    target.replaceWith(original);
-    target = original;
-  }
-  const raw = err && err.message ? String(err.message) : '';
-  note(target, 'Mermaid: ' + (raw.split('\n')[0] || 'render failed').slice(0, 140), true);
+  rendered.delete(target);
+  const original = snapshots.get(target) || sourceBlock(src);
+  target.replaceWith(original);
+  note(original, 'Mermaid: ' + (err && err.message ? String(err.message).split('\n')[0] : 'render failed').slice(0, 140), true);
 }
 
 async function renderTarget(target) {
   if (!target.isConnected) return; // preview closed before its turn came
-  const isPre = target.tagName === 'PRE';
-  const code = isPre ? target.querySelector('code.language-mermaid') : null;
-  const src = isPre ? (code ? code.textContent : '') : target.dataset.mermaidSource;
+  const src = target.dataset.mermaidSource;
   if (!src) return;
 
   let mermaid;
@@ -229,18 +228,8 @@ async function renderTarget(target) {
     if (!svg) throw new Error('render produced no SVG');
   } catch (err) { fail(target, src, err); return; }
   if (!target.isConnected) return; // the preview was replaced while rendering
-
-  if (isPre) {
-    const node = document.createElement('div');
-    node.className = 'md-mermaid';
-    node.dataset.mermaidSource = src;
-    node.innerHTML = svg;
-    snapshots.set(node, target);
-    target.replaceWith(node);
-    rendered.add(node);
-  } else {
-    target.innerHTML = svg; // theme re-render of an existing wrapper
-  }
+  target.innerHTML = svg;
+  rendered.add(target);
 }
 
 function watchTheme() {
@@ -258,7 +247,7 @@ function watchTheme() {
 
 export async function renderMermaidBlocks(root) {
   if (!root || !root.querySelectorAll) return;
-  const codes = root.querySelectorAll('pre > code.language-mermaid');
+  const codes = root.querySelectorAll(MD_MERMAID);
   if (!codes.length) return; // no blocks: mermaid is never imported
   watchTheme();
   let seen = 0;
@@ -267,11 +256,21 @@ export async function renderMermaidBlocks(root) {
     const pre = code.parentElement;
     if (seen > MAX_BLOCKS) {
       note(pre, 'Diagram not rendered: this preview has more than ' + MAX_BLOCKS + ' diagrams.');
-    } else if (code.textContent.length > MAX_CHARS) {
-      note(pre, 'Diagram not rendered: source is longer than ' + MAX_CHARS + ' characters.');
-    } else {
-      observe(pre);
+      continue;
     }
+    if (code.textContent.length > MAX_CHARS) {
+      note(pre, 'Diagram not rendered: source is longer than ' + MAX_CHARS + ' characters.');
+      continue;
+    }
+    // Swap in the wrapper before observing, so the code-block enhancer never
+    // sees a diagram as a code block and the source stays for a failed render.
+    const node = document.createElement('div');
+    node.className = 'md-mermaid';
+    node.dataset.mermaidSource = code.textContent;
+    if (pre.dataset.line) node.dataset.line = pre.dataset.line; // keep line navigation
+    snapshots.set(node, pre);
+    pre.replaceWith(node);
+    observe(node);
   }
 }
 
@@ -281,9 +280,8 @@ export async function renderMermaidBlocks(root) {
 export function forgetMermaid(root) {
   if (!root) return;
   if (observer) {
-    for (const code of root.querySelectorAll('pre > code.language-mermaid')) {
-      observer.unobserve(code.parentElement);
-    }
+    for (const node of root.querySelectorAll('.md-mermaid')) observer.unobserve(node);
+    for (const code of root.querySelectorAll(MD_MERMAID)) observer.unobserve(code.parentElement);
   }
   for (const node of rendered) {
     if (!node.isConnected || root.contains(node)) rendered.delete(node);

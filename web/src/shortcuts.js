@@ -1,9 +1,9 @@
 // web/src/shortcuts.js
-import { $, $$, esc, S, doc_, isMac, MOD, LH, keyCaps, withKeys } from './state.js';
-import { vp, sizer, showToast } from './ui.js';
+import { $, $$, esc, S, doc_, isMac, MOD, LH, keyCaps } from './state.js';
+import { vp, sizer } from './ui.js';
 import { layout, render, paint, toggleWordWrap, toggleLineNumbers } from './renderer.js';
 import { updateStatus } from './status.js';
-import { closeTab, switchTab, reopenClosedTab, togglePreview } from './tabs.js';
+import { closeTab, switchTab, reopenClosedTab } from './tabs.js';
 import { go } from './history.js';
 import { clearLink, hovercard } from './hover.js';
 import { openFind, clearFind, findbar } from './find.js';
@@ -16,6 +16,7 @@ import { showCalls } from './calls.js';
 import { SEL_KEYS, runSelectionAction, selectAll, clearSelectAll, copySelectAll } from './selbar.js';
 
 import { cycleTheme } from './theme.js';
+import { previewing, togglePreview, previewKey, selectPreview } from './markdown.js';
 
 /* Each entry lists alternative combos, written as for keyLabel in state.js so
    they show as ⌘/⌥/⇧ on a Mac and Ctrl/Alt/Shift elsewhere. Browsers keep
@@ -71,16 +72,13 @@ export function initShortcuts() {
     else if (act === 'goto') openPalette('line');
     else if (act === 'wrap') toggleWordWrap();
     else if (act === 'line-numbers') toggleLineNumbers();
-    else if (act === 'preview') togglePreview();
+    else if (act === 'md-preview') togglePreview();
     else if (act === 'palette') openPalette('command');
     else if (act === 'help') showHelp();
   });
 
   addEventListener('keydown', e => {
     const mod = e[MOD];
-    // A rendered Markdown tab uses the browser's own selection, not the source
-    // selection model (S.selAll, the status-bar actions, /api/raw).
-    const preview = doc_()?.mode === 'preview';
 
     if (e.key === 'Escape') {
       if (!overlay.hidden) { closePalette(); return; }
@@ -138,10 +136,7 @@ export function initShortcuts() {
     if (e.altKey && e.shiftKey && e.code === 'KeyH') { e.preventDefault(); showCalls(); return; }
     if (e.altKey && !mod && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) { e.preventDefault(); switchTab(+e.code.slice(5) - 1); return; }
     // Selection actions, live only while the status bar is showing them.
-    if (e.altKey && !mod && !e.shiftKey && SEL_KEYS[e.code]) {
-      if (preview) { e.preventDefault(); showToast('Preview', withKeys('Switch to Source for selection actions ({Alt+M})')); return; }
-      if (runSelectionAction(SEL_KEYS[e.code])) { e.preventDefault(); return; }
-    }
+    if (e.altKey && !mod && !e.shiftKey && SEL_KEYS[e.code] && runSelectionAction(SEL_KEYS[e.code])) { e.preventDefault(); return; }
     if (e.altKey && e.code === 'KeyZ') {
       e.preventDefault();
       toggleWordWrap();
@@ -162,19 +157,15 @@ export function initShortcuts() {
 
     if (inField(document.activeElement)) return;
 
-    /* Source selection is a custom model (the whole file via /api/raw), so it
-       must not hijack the browser's own selection while a rendered preview is
-       showing: there Mod+A/Mod+C copy the rendered text natively. */
+    // Select all takes the open file only, never the sidebar or status bar around it.
     const plainMod = mod && !e.shiftKey && !e.altKey;
-    if (plainMod && (e.key === 'a' || e.key === 'A') && !preview) { e.preventDefault(); selectAll(); return; }
-    if (plainMod && (e.key === 'c' || e.key === 'C') && !preview && copySelectAll()) { e.preventDefault(); return; }
+    if (plainMod && (e.key === 'a' || e.key === 'A')) { e.preventDefault(); if (previewing()) selectPreview(); else selectAll(); return; }
+    if (plainMod && (e.key === 'c' || e.key === 'C') && copySelectAll()) { e.preventDefault(); return; }
 
     if (e.key === '?') { e.preventDefault(); showHelp(); return; }
-    // A rendered preview scrolls like a page: leave its navigation keys to the
-    // browser instead of moving the (hidden) source caret.
-    if (preview && (e.key.startsWith('Arrow') || e.key === 'PageDown' || e.key === 'PageUp' || e.key === 'Home' || e.key === 'End')) return;
     const d = doc_();
     if (!d) return;
+    if (previewing(d)) { if (previewKey(e)) e.preventDefault(); return; }
     const toTop = () => { vp.scrollTop = 0; d.cur = 1; render(); updateStatus(); };
     const toBottom = () => { vp.scrollTop = sizer.offsetHeight; d.cur = d.total; render(); updateStatus(); };
     if (mod && e.key === 'Home') { e.preventDefault(); toTop(); return; }

@@ -340,18 +340,13 @@ func (d *Doc) backgroundPass() {
 }
 
 // tokenise renders one contiguous run of source into exactly want lines of HTML.
-func (d *Doc) tokenise(src string, want int) (out []string) {
-	if d.lexer == nil {
-		return plainFallback(src, want)
-	}
-	return tokeniseWith(d.lexer, src, want)
+func (d *Doc) tokenise(src string, want int) []string {
+	return highlightLines(d.lexer, src, want)
 }
 
-// tokeniseWith is tokenise without the document around it: one lexer over one
-// contiguous source run, cut into exactly want lines. Fenced code in md.go goes
-// through highlightSource and lands here, so a fence and the file viewer emit
-// the same <i class=..> markup.
-func tokeniseWith(lexer chroma.Lexer, src string, want int) (out []string) {
+// highlightLines lexes src into exactly want lines of HTML, one <i class=...>
+// per token. A nil lexer gives escaped plain text.
+func highlightLines(lexer chroma.Lexer, src string, want int) (out []string) {
 	out = make([]string, 0, want)
 	var b strings.Builder
 	b.Grow(256)
@@ -369,6 +364,10 @@ func tokeniseWith(lexer chroma.Lexer, src string, want int) (out []string) {
 		b.WriteByte('>')
 		b.WriteString(htmlEscaper.Replace(v))
 		b.WriteString(`</i>`)
+	}
+
+	if lexer == nil {
+		return plainFallback(src, want)
 	}
 
 	it, err := lexer.Tokenise(nil, src)
@@ -405,23 +404,6 @@ func tokeniseWith(lexer chroma.Lexer, src string, want int) (out []string) {
 		out = append(out, b.String())
 	}
 	return pad(out, want)
-}
-
-// highlightSource highlights a whole snippet with the lexer named lang and joins
-// the result with newlines, ready to drop between <code> and </code>. It comes
-// out in the same class vocabulary as file source. Unknown languages, failed
-// lexers, and panics all degrade to escaped plain text rather than an error.
-func highlightSource(src, lang string) string {
-	src = strings.ReplaceAll(src, "\r\n", "\n")
-	if lang == "" {
-		return htmlEscaper.Replace(src)
-	}
-	lexer := lexers.Get(lang)
-	if lexer == nil {
-		return htmlEscaper.Replace(src)
-	}
-	want := strings.Count(src, "\n") + 1
-	return strings.Join(tokeniseWith(chroma.Coalesce(lexer), src, want), "\n")
 }
 
 func plainFallback(src string, want int) []string {

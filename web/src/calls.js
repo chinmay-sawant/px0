@@ -1,6 +1,5 @@
 // web/src/calls.js
-import { $, $$, esc, S, doc_, api, keyLabel, withKeys } from './state.js';
-import { showToast } from './ui.js';
+import { $, $$, esc, S, doc_, api, keyLabel } from './state.js';
 import { updateStatus, setStatusNote, setLspState } from './status.js';
 import { openFile } from './tabs.js';
 import { showRightInspector } from './inspector.js';
@@ -42,7 +41,6 @@ function target(node) {
 
 export async function showCalls(arg) {
   const d = doc_();
-  if (d && d.mode === 'preview') { showToast('Preview', withKeys('Switch to Source for the call trail ({Alt+M})')); return; }
   const at = (arg && arg.word) ? arg : positionNow(typeof arg === 'string' ? arg : S.lastWord);
   showRightInspector('calls');
   cancelLspSetup();
@@ -168,7 +166,7 @@ export function initCalls() {
     $$('#right-calls-list .cnode.sel').forEach(x => x.classList.remove('sel'));
     row.classList.add('sel');
     const t = target(node);
-    await openFile(t.path, { line: t.line, source: true });
+    await openFile(t.path, { line: t.line });
     // At a call site the name worth marking is the function being called.
     const called = T && T.dir === 'in' && node.parent ? node.parent.n.name : node.n.name;
     flashFind(called);

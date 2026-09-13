@@ -77,7 +77,7 @@ export function initSearch() {
     if (r) {
       $$('.rline.sel', resultsEl).forEach(x => x.classList.remove('sel'));
       r.classList.add('sel');
-      openFile(r.dataset.p, { line: +r.dataset.n, source: true });
+      openFile(r.dataset.p, { line: +r.dataset.n });
       const q = $('#q').value;
       if (q) flashFind(q);
     }

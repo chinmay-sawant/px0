@@ -73,7 +73,6 @@
     mdPreview: true
   };
   var doc_ = () => S2.active >= 0 ? S2.tabs[S2.active] : null;
-  var isMarkdown = (p) => /\.(md|markdown)$/i.test(p || "");
 
   // web/src/ui.js
   var vp = $("#viewport");
@@ -121,7 +120,7 @@
   }
   function layout() {
     const d = doc_();
-    if (!d || d.mode === "preview")
+    if (!d)
       return;
     const digits = String(d.total).length;
     editor.style.setProperty("--gw", digits);
@@ -158,18 +157,9 @@
     const linesBtn = $('[data-action="line-numbers"]');
     if (linesBtn)
       linesBtn.classList.toggle("active", !!S2.lineNumbers);
-    const mdBtn = $('[data-action="preview"]');
-    if (mdBtn) {
-      const d = doc_();
-      const md = !!d && isMarkdown(d.path);
-      mdBtn.hidden = !md;
-      mdBtn.classList.toggle("active", md && d.mode === "preview");
-    }
   }
   var raf = 0;
   function render() {
-    if (doc_()?.mode === "preview")
-      return;
     if (raf)
       return;
     raf = requestAnimationFrame(() => {
@@ -179,7 +169,7 @@
   }
   function paint() {
     const d = doc_();
-    if (!d || d.mode === "preview") {
+    if (!d) {
       const c = $("#caret");
       if (c)
         c.hidden = true;
@@ -398,8 +388,6 @@
     return null;
   }
   function ensureChunks(d, first, last) {
-    if (!d || d.mode === "preview")
-      return;
     const c0 = Math.floor(first / CHUNK), c1 = Math.floor(Math.max(first, last - 1) / CHUNK);
     for (let c = c0;c <= c1; c++) {
       if (d.chunks.has(c) || d.pending.has(c))
@@ -466,107 +454,6 @@
     }).observe(editor);
   }
 
-  // web/src/status.js
-  function updateStatus() {
-    const d = doc_();
-    const sizeEl = $("#st-size");
-    if (sizeEl)
-      sizeEl.textContent = d ? fmtBytes(d.size) : "";
-    const idxEl = $("#st-index");
-    if (idxEl && S2.meta) {
-      idxEl.textContent = S2.meta.indexMs + "ms";
-      idxEl.title = `Workspace Indexing: took ${S2.meta.indexMs}ms to index ${S2.meta.files.toLocaleString()} files (${S2.meta.ready ? "ready" : "in progress"})`;
-    }
-    const verEl = $("#st-ver");
-    if (verEl && S2.meta?.version) {
-      verEl.textContent = "v" + S2.meta.version;
-      verEl.title = `px0 v${S2.meta.version} (Click for shortcuts & help)`;
-    }
-    drawLspStatus();
-  }
-  function setStatusNote(msg) {
-    const el = $("#st-pos");
-    if (el)
-      el.textContent = msg;
-  }
-  function fmtBytes(n) {
-    if (n < 1024)
-      return n + " B";
-    if (n < 1048576)
-      return (n / 1024).toFixed(1) + " KB";
-    return (n / 1048576).toFixed(1) + " MB";
-  }
-  function setLspState(j) {
-    if (!j || !j.state)
-      return;
-    S2.lsp.state = j.state;
-    S2.lsp.server = j.server || S2.lsp.server;
-    if ("missing" in j || j.state !== "off")
-      S2.lsp.missing = j.missing || "";
-    drawLspStatus();
-  }
-  function drawLspStatus() {
-    const el = $("#st-lsp");
-    const { state, server, missing } = S2.lsp;
-    el.title = "";
-    if (state === "off" && missing) {
-      el.dataset.state = "missing";
-      el.textContent = "LSP: set up";
-      el.title = "No language server for " + missing + ". Click to install or start one.";
-      return;
-    }
-    if (!server || state === "off") {
-      el.textContent = "";
-      el.removeAttribute("data-state");
-      return;
-    }
-    el.dataset.state = state;
-    el.textContent = state === "ready" ? server : server + " " + state;
-    if (state === "failed")
-      el.title = "The language server did not start. Click for details.";
-  }
-  function updateMetricsDisplay(m) {
-    if (!m)
-      return;
-    const cpuEl = $("#st-cpu");
-    const ramEl = $("#st-ram");
-    const contEl = $("#st-metrics");
-    if (cpuEl)
-      cpuEl.textContent = `${m.cpuUsage.toFixed(1)}%`;
-    if (ramEl)
-      ramEl.textContent = fmtBytes(m.rssBytes);
-    if (contEl) {
-      contEl.title = `Editor OS Process Usage:
-• Resident RAM (RSS): ${fmtBytes(m.rssBytes)}
-• CPU Usage: ${m.cpuUsage.toFixed(1)}%
-• Active Goroutines: ${m.goroutines || 0}`;
-    }
-  }
-  async function refreshMetrics() {
-    try {
-      const m = await api("/api/metrics");
-      updateMetricsDisplay(m);
-    } catch {}
-  }
-  function initMetrics() {
-    refreshMetrics();
-    setInterval(refreshMetrics, 2500);
-  }
-  var FIT_STEPS = 6;
-  var statusEl = $("#status");
-  function fitStatus() {
-    for (let i = 1;i <= FIT_STEPS; i++)
-      statusEl.classList.remove("fit-" + i);
-    for (let i = 1;i <= FIT_STEPS && statusEl.scrollWidth > statusEl.clientWidth; i++) {
-      statusEl.classList.add("fit-" + i);
-    }
-  }
-  function initStatusFit() {
-    new ResizeObserver(fitStatus).observe(statusEl);
-    new MutationObserver(fitStatus).observe(statusEl, { childList: true, subtree: true, characterData: true });
-    document.fonts?.ready.then(fitStatus);
-  }
-
   // web/src/history.js
   function pushHistory(path, line) {
     const top = S2.hist[S2.histIdx];
@@ -584,7 +471,7 @@
       return;
     S2.histIdx = i;
     const h = S2.hist[i];
-    openFile(h.path, { line: h.line, push: false, source: true });
+    openFile(h.path, { line: h.line, push: false });
   }
 
   // web/src/outline.js
@@ -696,7 +583,14 @@
         return;
       $$(".sym.sel").forEach((x) => x.classList.remove("sel"));
       s.classList.add("sel");
-      gotoLine(+s.dataset.n);
+      const d = doc_();
+      if (!d)
+        return;
+      d.cur = +s.dataset.n;
+      centerLine(d.cur);
+      render();
+      updateStatus();
+      pushHistory(d.path, d.cur);
     });
     $("#outline-filter")?.addEventListener("input", drawOutline);
   }
@@ -880,6 +774,144 @@
     })();
   }
 
+  // web/src/find.js
+  var findbar = $("#findbar");
+  var findInput = $("#find-input");
+  function editorSelection() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount)
+      return "";
+    const at = sel.getRangeAt(0).commonAncestorContainer;
+    if (!vp.contains(at) && !mdview.contains(at))
+      return "";
+    const line = sel.toString().split(/\r?\n/).find((l) => l.trim());
+    return line ? line.trim() : "";
+  }
+  function openFind(seed) {
+    if (!doc_())
+      return;
+    const sel = editorSelection();
+    if (sel)
+      findInput.value = sel;
+    else if (findbar.hidden && seed)
+      findInput.value = seed;
+    findbar.hidden = false;
+    findInput.focus();
+    findInput.select();
+    if (findInput.value)
+      runFind();
+  }
+  function clearFind() {
+    findbar.hidden = true;
+    S2.find = null;
+    $("#find-count").textContent = "0";
+    $("#minimap-hits").innerHTML = "";
+    clearPreviewMarks();
+    paint();
+  }
+  var runFind = debounce(async () => {
+    const d = doc_();
+    if (!d)
+      return;
+    const q = findInput.value;
+    if (previewing(d)) {
+      const n = findInPreview(q);
+      S2.find = q ? { q, ci: false, hits: new Array(n).fill(null), byLine: new Set, active: n ? 0 : -1, preview: true } : null;
+      $("#find-count").textContent = !q ? "0" : n ? "1 / " + n : "no results";
+      $("#minimap-hits").innerHTML = previewHitOffsets().map((p) => '<i style="top:' + p + '%"></i>').join("");
+      if (n)
+        jumpToHit(0);
+      return;
+    }
+    if (!q) {
+      S2.find = null;
+      $("#find-count").textContent = "0";
+      $("#minimap-hits").innerHTML = "";
+      paint();
+      return;
+    }
+    let j;
+    try {
+      j = await api("/api/search", { q, glob: d.path });
+    } catch {
+      return;
+    }
+    const f = (j.results || []).find((r) => r.path === d.path);
+    const hits = [];
+    if (f) {
+      let prevLine = -1, n = 0;
+      for (const m of f.matches) {
+        n = m.line === prevLine ? n + 1 : 0;
+        prevLine = m.line;
+        hits.push({ line: m.line, n });
+      }
+    }
+    S2.find = { q, ci: false, hits, byLine: new Set(hits.map((h) => h.line)), active: hits.length ? 0 : -1 };
+    $("#find-count").textContent = hits.length ? "1 / " + hits.length : "no results";
+    drawMinimap(hits, d.total);
+    if (hits.length)
+      jumpToHit(0);
+    else
+      paint();
+  }, 140);
+  function drawMinimap(hits, total) {
+    const mm = $("#minimap-hits");
+    if (!hits.length) {
+      mm.innerHTML = "";
+      return;
+    }
+    const seen = new Set;
+    mm.innerHTML = hits.filter((h) => !seen.has(h.line) && seen.add(h.line)).map((h) => '<i style="top:' + ((h.line - 1) / total * 100).toFixed(3) + '%"></i>').join("");
+  }
+  function jumpToHit(i) {
+    const d = doc_();
+    if (!d || !S2.find || !S2.find.hits.length)
+      return;
+    const n = S2.find.hits.length;
+    S2.find.active = (i % n + n) % n;
+    if (S2.find.preview) {
+      $("#find-count").textContent = S2.find.active + 1 + " / " + n;
+      showPreviewHit(S2.find.active);
+      return;
+    }
+    const h = S2.find.hits[S2.find.active];
+    d.cur = h.line;
+    const y = (h.line - 1) * LH;
+    if (y < vp.scrollTop + LH * 2 || y > vp.scrollTop + vp.clientHeight - LH * 3)
+      centerLine(h.line);
+    $("#find-count").textContent = S2.find.active + 1 + " / " + n;
+    render();
+    updateStatus();
+  }
+  function initFind() {
+    findInput.addEventListener("input", runFind);
+    findInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        jumpToHit(S2.find ? S2.find.active + (e.shiftKey ? -1 : 1) : 0);
+      }
+      if (e.key === "Escape") {
+        clearFind();
+        vp.focus();
+      }
+    });
+    $("#find-next").addEventListener("click", () => jumpToHit(S2.find ? S2.find.active + 1 : 0));
+    $("#find-prev").addEventListener("click", () => jumpToHit(S2.find ? S2.find.active - 1 : 0));
+    $("#find-close").addEventListener("click", clearFind);
+    $("#minimap-hits").addEventListener("click", (e) => {
+      const r = $("#minimap-hits").getBoundingClientRect();
+      const d = doc_();
+      if (!d)
+        return;
+      if (previewing(d)) {
+        scrollPreviewTo((e.clientY - r.top) / r.height);
+        return;
+      }
+      centerLine(Math.round((e.clientY - r.top) / r.height * d.total));
+      render();
+    });
+  }
+
   // web/src/search.js
   var resultsEl = $("#results");
   var lastResults = null;
@@ -948,7 +980,7 @@
       if (r) {
         $$(".rline.sel", resultsEl).forEach((x) => x.classList.remove("sel"));
         r.classList.add("sel");
-        openFile(r.dataset.p, { line: +r.dataset.n, source: true });
+        openFile(r.dataset.p, { line: +r.dataset.n });
         const q = $("#q").value;
         if (q)
           flashFind(q);
@@ -1099,7 +1131,14 @@
         return;
       $$("#right-symbols-list .sym.sel, #outline .sym.sel").forEach((x) => x.classList.remove("sel"));
       s.classList.add("sel");
-      gotoLine(+s.dataset.n);
+      const d = doc_();
+      if (!d)
+        return;
+      d.cur = +s.dataset.n;
+      centerLine(d.cur);
+      render();
+      updateStatus();
+      pushHistory(d.path, d.cur);
     });
     $("#right-symbols-filter")?.addEventListener("input", drawOutline);
     $("#right-refs-list")?.addEventListener("click", (e) => {
@@ -1118,7 +1157,7 @@
       if (r) {
         $$("#right-refs-list .rline.sel").forEach((x) => x.classList.remove("sel"));
         r.classList.add("sel");
-        openFile(r.dataset.p, { line: +r.dataset.n, source: true });
+        openFile(r.dataset.p, { line: +r.dataset.n });
         const targetEl = $("#right-ref-target");
         if (targetEl && targetEl.textContent)
           flashFind(targetEl.textContent);
@@ -1174,14 +1213,8 @@
   }
   async function gotoDefinition(arg) {
     const d = doc_();
-    if (!d)
-      return;
-    if (d.mode === "preview") {
-      showToast("Preview", withKeys("Switch to Source for definitions ({Alt+M})"));
-      return;
-    }
     const at = arg && arg.word ? arg : positionNow(typeof arg === "string" ? arg : S2.lastWord);
-    if (!at)
+    if (!d || !at)
       return;
     if (canAskServer(at)) {
       setStatusNote("definition of " + at.word + "…");
@@ -1222,21 +1255,15 @@
   }
   async function findReferences(arg) {
     const d = doc_();
-    if (!d)
-      return;
-    if (d.mode === "preview") {
-      showToast("Preview", withKeys("Switch to Source for references ({Alt+M})"));
-      return;
-    }
     const at = arg && arg.word ? arg : positionNow(typeof arg === "string" ? arg : S2.lastWord);
-    if (!at)
+    if (!d || !at)
       return;
     inspectReferences(at);
   }
   function acceptHits(word, hits, server, noun, refCount) {
     if (hits.length === 1) {
       const h = hits[0];
-      openFile(h.path, { line: h.line, source: true });
+      openFile(h.path, { line: h.line });
       flashFind(h.mid || word);
       setStatusNote(server ? server + " · " + h.path + ":" + h.line : h.path + ":" + h.line);
       return;
@@ -1607,10 +1634,6 @@
   }
   async function showCalls(arg) {
     const d = doc_();
-    if (d && d.mode === "preview") {
-      showToast("Preview", withKeys("Switch to Source for the call trail ({Alt+M})"));
-      return;
-    }
     const at = arg && arg.word ? arg : positionNow(typeof arg === "string" ? arg : S2.lastWord);
     showRightInspector("calls");
     cancelLspSetup();
@@ -1755,7 +1778,7 @@
       $$("#right-calls-list .cnode.sel").forEach((x) => x.classList.remove("sel"));
       row.classList.add("sel");
       const t = target(node);
-      await openFile(t.path, { line: t.line, source: true });
+      await openFile(t.path, { line: t.line });
       const called = T && T.dir === "in" && node.parent ? node.parent.n.name : node.n.name;
       flashFind(called);
     });
@@ -1934,285 +1957,12 @@
     });
   }
 
-  // web/src/find.js
-  var findbar = $("#findbar");
-  var findInput = $("#find-input");
-  function editorSelection() {
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || !sel.rangeCount)
-      return "";
-    if (!vp.contains(sel.getRangeAt(0).commonAncestorContainer))
-      return "";
-    const line = sel.toString().split(/\r?\n/).find((l) => l.trim());
-    return line ? line.trim() : "";
-  }
-  function openFind(seed) {
-    const d = doc_();
-    if (!d)
-      return;
-    if (d.mode === "preview") {
-      showToast("Preview", withKeys("Switch to Source to find ({Alt+M})"));
-      return;
-    }
-    const sel = editorSelection();
-    if (sel)
-      findInput.value = sel;
-    else if (findbar.hidden && seed)
-      findInput.value = seed;
-    findbar.hidden = false;
-    findInput.focus();
-    findInput.select();
-    if (findInput.value)
-      runFind();
-  }
-  function clearFind() {
-    findbar.hidden = true;
-    S2.find = null;
-    $("#find-count").textContent = "0";
-    $("#minimap-hits").innerHTML = "";
-    paint();
-  }
-  var runFind = debounce(async () => {
-    const d = doc_();
-    if (!d)
-      return;
-    const q = findInput.value;
-    if (!q) {
-      S2.find = null;
-      $("#find-count").textContent = "0";
-      $("#minimap-hits").innerHTML = "";
-      paint();
-      return;
-    }
-    let j;
-    try {
-      j = await api("/api/search", { q, glob: d.path });
-    } catch {
-      return;
-    }
-    const f = (j.results || []).find((r) => r.path === d.path);
-    const hits = [];
-    if (f) {
-      let prevLine = -1, n = 0;
-      for (const m of f.matches) {
-        n = m.line === prevLine ? n + 1 : 0;
-        prevLine = m.line;
-        hits.push({ line: m.line, n });
-      }
-    }
-    S2.find = { q, ci: false, hits, byLine: new Set(hits.map((h) => h.line)), active: hits.length ? 0 : -1 };
-    $("#find-count").textContent = hits.length ? "1 / " + hits.length : "no results";
-    drawMinimap(hits, d.total);
-    if (hits.length)
-      jumpToHit(0);
-    else
-      paint();
-  }, 140);
-  function drawMinimap(hits, total) {
-    const mm = $("#minimap-hits");
-    if (!hits.length) {
-      mm.innerHTML = "";
-      return;
-    }
-    const seen = new Set;
-    mm.innerHTML = hits.filter((h) => !seen.has(h.line) && seen.add(h.line)).map((h) => '<i style="top:' + ((h.line - 1) / total * 100).toFixed(3) + '%"></i>').join("");
-  }
-  function jumpToHit(i) {
-    const d = doc_();
-    if (!d || !S2.find || !S2.find.hits.length)
-      return;
-    const n = S2.find.hits.length;
-    S2.find.active = (i % n + n) % n;
-    const h = S2.find.hits[S2.find.active];
-    d.cur = h.line;
-    const y = (h.line - 1) * LH;
-    if (y < vp.scrollTop + LH * 2 || y > vp.scrollTop + vp.clientHeight - LH * 3)
-      centerLine(h.line);
-    $("#find-count").textContent = S2.find.active + 1 + " / " + n;
-    render();
-    updateStatus();
-  }
-  function initFind() {
-    findInput.addEventListener("input", runFind);
-    findInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        jumpToHit(S2.find ? S2.find.active + (e.shiftKey ? -1 : 1) : 0);
-      }
-      if (e.key === "Escape") {
-        clearFind();
-        vp.focus();
-      }
-    });
-    $("#find-next").addEventListener("click", () => jumpToHit(S2.find ? S2.find.active + 1 : 0));
-    $("#find-prev").addEventListener("click", () => jumpToHit(S2.find ? S2.find.active - 1 : 0));
-    $("#find-close").addEventListener("click", clearFind);
-    $("#minimap-hits").addEventListener("click", (e) => {
-      const r = $("#minimap-hits").getBoundingClientRect();
-      const d = doc_();
-      if (!d)
-        return;
-      centerLine(Math.round((e.clientY - r.top) / r.height * d.total));
-      render();
-    });
-  }
-
-  // web/src/selbar.js
-  var status = $("#status");
-  var statsEl = $("#sel-stats");
-  var SEL_KEYS = { KeyC: "copy-ref", KeyA: "copy-agent", KeyU: "usages" };
-  var current = null;
-  var allText = null;
-  var allInfo = null;
-  function getSelectedRangeInfo() {
-    if (S2.selAll)
-      return allInfo;
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || !sel.rangeCount)
-      return null;
-    const d = doc_();
-    if (!d)
-      return null;
-    const range = sel.getRangeAt(0);
-    if (!vp.contains(range.commonAncestorContainer))
-      return null;
-    const text = sel.toString().trim();
-    if (!text)
-      return null;
-    let startEl = range.startContainer;
-    if (startEl.nodeType !== 1)
-      startEl = startEl.parentElement;
-    let endEl = range.endContainer;
-    if (endEl.nodeType !== 1)
-      endEl = endEl.parentElement;
-    const startRow = startEl ? startEl.closest(".row") : null;
-    const endRow = endEl ? endEl.closest(".row") : null;
-    let l1 = d.cur || 1, l2 = d.cur || 1;
-    if (startRow && startRow.dataset.l)
-      l1 = +startRow.dataset.l;
-    if (endRow && endRow.dataset.l)
-      l2 = +endRow.dataset.l;
-    if (l1 > l2) {
-      const tmp = l1;
-      l1 = l2;
-      l2 = tmp;
-    }
-    return { text, l1, l2, path: d.path };
-  }
-  var refOf = ({ path, l1, l2 }) => path + ":" + (l1 === l2 ? l1 : l1 + "-" + l2);
-  function showSelectionBar(info) {
-    current = info;
-    const ref = refOf(info);
-    const lines = info.l2 - info.l1 + 1;
-    statsEl.title = ref;
-    statsEl.textContent = (lines === 1 ? "1 line" : lines + " lines") + " · " + info.text.length.toLocaleString() + " chars";
-    status.classList.add("selecting");
-    fitStatus();
-  }
-  function hideSelectionBar() {
-    if (!current)
-      return;
-    current = null;
-    status.classList.remove("selecting");
-    fitStatus();
-  }
-  function updateSelectionBar() {
-    const info = getSelectedRangeInfo();
-    if (info)
-      showSelectionBar(info);
-    else
-      hideSelectionBar();
-  }
-  function selectAll() {
-    const d = doc_();
-    if (!d)
-      return;
-    window.getSelection()?.removeAllRanges();
-    S2.selAll = d;
-    allInfo = null;
-    render();
-    const text = allText = fetch("/api/raw?path=" + encodeURIComponent(d.path)).then((r) => {
-      if (!r.ok)
-        throw new Error(r.statusText);
-      return r.text();
-    });
-    text.then((t) => {
-      if (allText !== text)
-        return;
-      allInfo = { text: t, l1: 1, l2: d.total, path: d.path };
-      showSelectionBar(allInfo);
-    }, () => {
-      if (allText !== text)
-        return;
-      clearSelectAll();
-      showToast("!", "Could not read " + d.path);
-    });
-  }
-  function clearSelectAll() {
-    if (!S2.selAll)
-      return;
-    S2.selAll = null;
-    allText = null;
-    allInfo = null;
-    render();
-    hideSelectionBar();
-  }
-  function copySelectAll() {
-    const d = S2.selAll;
-    if (!d || !allText)
-      return false;
-    allText.then((t) => copyToClipboard(t, "Copied " + d.path + " (" + d.total.toLocaleString() + " lines)"), () => {});
-    return true;
-  }
-  function runSelectionAction(act) {
-    if (!current)
-      return false;
-    const { text, path } = current;
-    const ref = refOf(current);
-    if (act === "copy-ref") {
-      copyToClipboard(ref, "Copied " + ref);
-    } else if (act === "copy-agent") {
-      const ext = path.split(".").pop() || "";
-      copyToClipboard("### Reference: " + ref + "\n```" + ext + `
-` + text + "\n```", "Copied snippet for Agent (" + ref + ")");
-    } else if (act === "usages") {
-      findReferences(text.split(/\s+/)[0] || text);
-    } else {
-      return false;
-    }
-    return true;
-  }
-  function initSelectionBar() {
-    document.addEventListener("mouseup", () => setTimeout(updateSelectionBar, 20));
-    vp.addEventListener("keyup", (e) => {
-      if (e.shiftKey)
-        setTimeout(updateSelectionBar, 20);
-    });
-    document.addEventListener("selectionchange", () => {
-      if (current)
-        updateSelectionBar();
-    });
-    document.addEventListener("mousedown", (e) => {
-      if (!S2.selAll || e.target.closest?.("#footer-sel"))
-        return;
-      if (e.target === vp && (e.offsetX >= vp.clientWidth || e.offsetY >= vp.clientHeight))
-        return;
-      clearSelectAll();
-    }, true);
-    const bar = $("#footer-sel");
-    bar.addEventListener("mousedown", (e) => e.preventDefault());
-    bar.addEventListener("click", (e) => {
-      const btn = e.target.closest("[data-sel]");
-      if (btn)
-        runSelectionAction(btn.dataset.sel);
-    });
-  }
-
   // web/src/mermaid.js
   var MERMAID_VERSION = "11.17.2";
   var MERMAID_URL = "/static/lib/mermaid/" + MERMAID_VERSION + "/mermaid.esm.min.mjs";
   var MAX_BLOCKS = 50;
   var MAX_CHARS = 2000;
+  var MD_MERMAID = 'pre[data-lang="mermaid"] > code';
   var mermaidPromise = null;
   var mermaidModule = null;
   var renderQueue = Promise.resolve();
@@ -2401,29 +2151,24 @@
   }
   function sourceBlock(src) {
     const pre = document.createElement("pre");
+    pre.className = "md-code";
+    pre.dataset.lang = "mermaid";
     const code = document.createElement("code");
-    code.className = "language-mermaid";
     code.textContent = src;
     pre.appendChild(code);
     return pre;
   }
   function fail(target, src, err) {
-    if (target.tagName !== "PRE") {
-      rendered.delete(target);
-      const original = snapshots.get(target) || sourceBlock(src);
-      target.replaceWith(original);
-      target = original;
-    }
-    const raw = err && err.message ? String(err.message) : "";
-    note(target, "Mermaid: " + (raw.split(`
-`)[0] || "render failed").slice(0, 140), true);
+    rendered.delete(target);
+    const original = snapshots.get(target) || sourceBlock(src);
+    target.replaceWith(original);
+    note(original, "Mermaid: " + (err && err.message ? String(err.message).split(`
+`)[0] : "render failed").slice(0, 140), true);
   }
   async function renderTarget(target) {
     if (!target.isConnected)
       return;
-    const isPre = target.tagName === "PRE";
-    const code = isPre ? target.querySelector("code.language-mermaid") : null;
-    const src = isPre ? code ? code.textContent : "" : target.dataset.mermaidSource;
+    const src = target.dataset.mermaidSource;
     if (!src)
       return;
     let mermaid;
@@ -2447,17 +2192,8 @@
     }
     if (!target.isConnected)
       return;
-    if (isPre) {
-      const node = document.createElement("div");
-      node.className = "md-mermaid";
-      node.dataset.mermaidSource = src;
-      node.innerHTML = svg;
-      snapshots.set(node, target);
-      target.replaceWith(node);
-      rendered.add(node);
-    } else {
-      target.innerHTML = svg;
-    }
+    target.innerHTML = svg;
+    rendered.add(target);
   }
   function watchTheme() {
     if (themeWatcher)
@@ -2479,7 +2215,7 @@
   async function renderMermaidBlocks(root) {
     if (!root || !root.querySelectorAll)
       return;
-    const codes = root.querySelectorAll("pre > code.language-mermaid");
+    const codes = root.querySelectorAll(MD_MERMAID);
     if (!codes.length)
       return;
     watchTheme();
@@ -2489,20 +2225,30 @@
       const pre = code.parentElement;
       if (seen > MAX_BLOCKS) {
         note(pre, "Diagram not rendered: this preview has more than " + MAX_BLOCKS + " diagrams.");
-      } else if (code.textContent.length > MAX_CHARS) {
-        note(pre, "Diagram not rendered: source is longer than " + MAX_CHARS + " characters.");
-      } else {
-        observe(pre);
+        continue;
       }
+      if (code.textContent.length > MAX_CHARS) {
+        note(pre, "Diagram not rendered: source is longer than " + MAX_CHARS + " characters.");
+        continue;
+      }
+      const node = document.createElement("div");
+      node.className = "md-mermaid";
+      node.dataset.mermaidSource = code.textContent;
+      if (pre.dataset.line)
+        node.dataset.line = pre.dataset.line;
+      snapshots.set(node, pre);
+      pre.replaceWith(node);
+      observe(node);
     }
   }
   function forgetMermaid(root) {
     if (!root)
       return;
     if (observer) {
-      for (const code of root.querySelectorAll("pre > code.language-mermaid")) {
+      for (const node of root.querySelectorAll(".md-mermaid"))
+        observer.unobserve(node);
+      for (const code of root.querySelectorAll(MD_MERMAID))
         observer.unobserve(code.parentElement);
-      }
     }
     for (const node of rendered) {
       if (!node.isConnected || root.contains(node))
@@ -2510,136 +2256,711 @@
     }
   }
 
-  // web/src/md.js
-  var previewShown = null;
-  var openInApp = null;
-  function setPreviewLinkOpener(fn) {
-    openInApp = fn;
-  }
-  async function loadPreview(d) {
-    let j;
-    try {
-      j = await api("/api/md", { path: d.path });
-    } catch (e) {
-      if (!S2.tabs.includes(d))
-        return;
-      d.mdHtml = null;
-      d.mode = "source";
-      if (doc_() === d) {
-        syncPreview();
-        layout();
-        render();
-        updateStatus();
-      }
-      showToast("!", d.name + ": " + (e.message || "could not render Markdown"));
-      return;
-    }
-    if (!S2.tabs.includes(d))
-      return;
-    d.mdHtml = typeof j.html === "string" ? j.html : "";
-    if (doc_() === d && d.mode === "preview")
-      syncPreview();
-  }
-  function previewBody(d) {
-    if (d.mdEl)
-      return d.mdEl;
-    const el = document.createElement("div");
-    el.className = "md-body";
-    el.innerHTML = d.mdHtml || "";
-    el.addEventListener("click", onPreviewClick);
-    d.mdEl = el;
-    renderMermaidBlocks(el).catch(() => {});
-    return el;
-  }
-  function resolveLink(d, href) {
-    if (!d || !href || href.charAt(0) === "#")
-      return "";
-    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.slice(0, 2) === "//")
-      return "";
-    const clean = href.split("#")[0].split("?")[0];
-    if (!clean)
-      return "";
-    const dir = d.path.includes("/") ? d.path.slice(0, d.path.lastIndexOf("/")) : "";
-    const out = dir ? dir.split("/") : [];
-    for (const raw of clean.split("/")) {
-      if (!raw || raw === ".")
-        continue;
-      if (raw === "..") {
-        if (!out.length)
-          return "";
-        out.pop();
-        continue;
-      }
-      let seg = raw;
-      try {
-        seg = decodeURIComponent(raw);
-      } catch {}
-      out.push(seg);
-    }
-    return out.join("/");
-  }
-  function onPreviewClick(e) {
-    const a = e.target instanceof Element ? e.target.closest("a") : null;
-    if (!a)
-      return;
-    const path = resolveLink(doc_(), a.getAttribute("href") || "");
-    if (!path || !openInApp)
-      return;
-    e.preventDefault();
-    openInApp(path);
-  }
-  function showPreview(d) {
-    const box = $("#mdview");
-    if (!box || d.mdHtml == null)
-      return;
-    if (previewShown !== d) {
-      if (previewShown)
-        previewShown.mdScroll = box.scrollTop;
-      box.replaceChildren(previewBody(d));
-      previewShown = d;
-      box.scrollTop = d.mdScroll || 0;
-    }
-    box.hidden = false;
-  }
-  function hidePreview() {
-    const box = $("#mdview");
-    if (!box || box.hidden)
-      return;
-    if (previewShown)
-      previewShown.mdScroll = box.scrollTop;
-    box.hidden = true;
+  // web/src/markdown.js
+  var mdview = $("#mdview");
+  var mdArticle = $("#md");
+  var mdShown = null;
+  var mdDrawn = null;
+  var mdGen = 0;
+  function previewing(d = doc_()) {
+    return !!(d && d.markdown && S2.mdPreview && !d.mdError);
   }
   function syncPreview() {
     const d = doc_();
-    const preview = !!d && d.mode === "preview";
-    document.body.classList.toggle("md-preview", preview);
-    if (preview && d.mdHtml != null) {
-      showPreview(d);
-      const caret = $("#caret");
-      if (caret)
-        caret.hidden = true;
-    } else {
-      hidePreview();
+    const want = previewing(d) ? d : null;
+    if (want === mdShown)
+      return;
+    if (mdShown && mdDrawn === mdShown)
+      mdShown.mdScroll = mdview.scrollTop;
+    mdShown = want;
+    mdDrawn = null;
+    mdview.hidden = !want;
+    forgetMermaid(mdArticle);
+    mdArticle.replaceChildren();
+    if (want)
+      drawPreview(want);
+  }
+  async function drawPreview(d) {
+    const gen = ++mdGen;
+    if (d.mdHtml === undefined) {
+      try {
+        d.mdReq = d.mdReq || api("/api/markdown", { path: d.path });
+        d.mdHtml = (await d.mdReq).html;
+      } catch (e) {
+        d.mdError = e.message;
+        if (gen === mdGen && mdShown === d) {
+          showToast("!", "No preview for " + d.name + ": " + e.message);
+          syncPreview();
+          updateStatus();
+        }
+        return;
+      } finally {
+        d.mdReq = null;
+      }
+      if (gen !== mdGen || mdShown !== d)
+        return;
     }
-    updateEditorOptionControls();
+    forgetMermaid(mdArticle);
+    mdArticle.replaceChildren(mdSanitize(d.mdHtml, d.path));
+    mdEnhance();
+    renderMermaidBlocks(mdArticle).catch(() => {});
+    mdDrawn = d;
+    const target = d.mdAnchor && mdFindAnchor(d.mdAnchor);
+    if (target)
+      mdScrollTo(target);
+    else if (d.mdLine)
+      previewLine(d.mdLine);
+    else
+      mdview.scrollTop = d.mdScroll || 0;
+    d.mdAnchor = "";
+    d.mdLine = 0;
+    if (!findbar.hidden)
+      runFind();
+  }
+  function togglePreview() {
+    const d = doc_();
+    if (!d || !d.markdown) {
+      showToast("!", "Preview works on Markdown files");
+      return;
+    }
+    hideHover();
+    if (previewing(d)) {
+      const line = mdDrawn === d ? previewTopLine() : 1;
+      mdSetPref(false);
+      syncPreview();
+      sourceToLine(line);
+    } else {
+      d.mdError = "";
+      d.mdLine = sourceTopLine();
+      mdSetPref(true);
+      syncPreview();
+    }
+    if (!findbar.hidden)
+      runFind();
+    else
+      S2.find = null;
+    render();
+    updateStatus();
+  }
+  function mdSetPref(on) {
+    S2.mdPreview = on;
+    try {
+      localStorage.setItem("px0.mdPreview", on ? "true" : "false");
+    } catch {}
+  }
+  var HTML_NS = "http://www.w3.org/1999/xhtml";
+  var MD_DROP = new Set(("script style iframe frame frameset object embed applet template noscript noembed " + "svg math form textarea select option button link meta base title audio video source track canvas dialog").split(" "));
+  var MD_KEEP = new Set(("a abbr b bdi bdo blockquote br caption center cite code col colgroup dd del details dfn div dl dt " + "em figcaption figure h1 h2 h3 h4 h5 h6 hr i img input ins kbd li mark ol p pre q rp rt ruby s samp section small span " + "strike strong sub summary sup table tbody td tfoot th thead tr tt u ul var wbr").split(" "));
+  var MD_ATTRS = new Set(("align valign alt title lang dir width height colspan rowspan start reversed open checked " + "disabled type data-line data-lang").split(" "));
+  var MD_TOKENS = new Set("k kt nf nc nb nv no na nt nd np s m o p c cp gi gd gh ge gs err g".split(" "));
+  var MD_SCHEME = /^([a-z][a-z0-9+.-]*):/i;
+  var MD_ORIGIN = "http://px0.invalid";
+  var mdURL = (ref) => ref.replace(/[\t\n\r]/g, "").replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, "");
+  function mdSanitize(html, docPath) {
+    const body = new DOMParser().parseFromString(html, "text/html").body;
+    const dir = docPath.slice(0, docPath.lastIndexOf("/") + 1);
+    const base = MD_ORIGIN + "/" + dir.split("/").map(encodeURIComponent).join("/");
+    for (const el of [...body.querySelectorAll("*")]) {
+      if (!body.contains(el))
+        continue;
+      const tag = el.localName;
+      if (el.namespaceURI !== HTML_NS || MD_DROP.has(tag)) {
+        el.remove();
+        continue;
+      }
+      if (!MD_KEEP.has(tag) || tag === "input" && el.getAttribute("type") !== "checkbox") {
+        el.replaceWith(...el.childNodes);
+        continue;
+      }
+      const attrs = {};
+      for (const a of [...el.attributes]) {
+        attrs[a.name] = a.value;
+        el.removeAttribute(a.name);
+      }
+      for (const name in attrs)
+        if (MD_ATTRS.has(name))
+          el.setAttribute(name, attrs[name]);
+      const id = attrs.id || tag === "a" && attrs.name;
+      if (id)
+        el.id = "md-" + id;
+      if (attrs.class) {
+        const keep = attrs.class.split(/\s+/).filter((c) => c === "md-code" || c.startsWith("footnote") || tag === "i" && MD_TOKENS.has(c));
+        if (keep.length)
+          el.className = keep.join(" ");
+      }
+      if (tag === "input")
+        el.disabled = true;
+      if (tag === "img")
+        mdSetImage(el, mdURL(attrs.src || ""), base);
+      if (tag === "a" && attrs.href)
+        mdSetLink(el, mdURL(attrs.href), base);
+    }
+    const frag = document.createDocumentFragment();
+    while (body.firstChild)
+      frag.appendChild(document.adoptNode(body.firstChild));
+    return frag;
+  }
+  function mdLocal(ref, base) {
+    let u;
+    try {
+      u = new URL(ref, base);
+    } catch {
+      return null;
+    }
+    if (u.origin !== MD_ORIGIN)
+      return null;
+    let path = u.pathname;
+    try {
+      path = decodeURIComponent(path);
+    } catch {}
+    return { path: path.slice(1), hash: u.hash.slice(1) };
+  }
+  function mdSetImage(img, src, base) {
+    const m = MD_SCHEME.exec(src);
+    if (m) {
+      if (/^https?$/i.test(m[1]) || /^data:image\//i.test(src))
+        img.setAttribute("src", src);
+    } else if (src.startsWith("//")) {
+      img.setAttribute("src", src);
+    } else if (src) {
+      const t = mdLocal(src, base);
+      if (t)
+        img.setAttribute("src", "/api/raw?path=" + encodeURIComponent(t.path));
+    }
+  }
+  function mdSetLink(a, href, base) {
+    if (href.startsWith("#")) {
+      a.setAttribute("href", href);
+      a.dataset.anchor = href.slice(1);
+      return;
+    }
+    const m = MD_SCHEME.exec(href);
+    if (m || href.startsWith("//")) {
+      if (m && !/^(https?|mailto)$/i.test(m[1]))
+        return;
+      a.setAttribute("href", href);
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      return;
+    }
+    const t = mdLocal(href, base);
+    if (!t)
+      return;
+    a.setAttribute("href", "/api/raw?path=" + encodeURIComponent(t.path));
+    a.dataset.path = t.path;
+    if (t.hash)
+      a.dataset.anchor = t.hash;
+  }
+  var MD_ALERTS = { note: "Note", tip: "Tip", important: "Important", warning: "Warning", caution: "Caution" };
+  function mdEnhance() {
+    for (const q of $$("blockquote", mdArticle))
+      mdAlert(q);
+    for (const pre of $$("pre", mdArticle)) {
+      if (pre.dataset.lang === "mermaid")
+        continue;
+      const wrap = document.createElement("div");
+      wrap.className = "md-pre";
+      if (pre.dataset.lang)
+        wrap.dataset.lang = pre.dataset.lang;
+      pre.replaceWith(wrap);
+      const copy = document.createElement("button");
+      copy.className = "md-copy";
+      copy.title = "Copy code";
+      copy.setAttribute("aria-label", "Copy code");
+      copy.innerHTML = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5V3a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5"/></svg>';
+      wrap.append(pre, copy);
+    }
+  }
+  function mdAlert(q) {
+    const p = q.firstElementChild;
+    const t = p && p.localName === "p" && p.firstChild;
+    if (!t || t.nodeType !== 3)
+      return;
+    const m = /^\s*\[!(\w+)\][ \t]*\n?/.exec(t.nodeValue);
+    const kind = m && m[1].toLowerCase();
+    if (!kind || !MD_ALERTS[kind])
+      return;
+    t.nodeValue = t.nodeValue.slice(m[0].length);
+    if (!t.nodeValue)
+      t.remove();
+    if (p.firstChild && p.firstChild.localName === "br")
+      p.firstChild.remove();
+    if (!p.textContent.trim() && !p.children.length)
+      p.remove();
+    const title = document.createElement("p");
+    title.className = "md-alert-title";
+    title.textContent = MD_ALERTS[kind];
+    q.prepend(title);
+    q.classList.add("md-alert", "md-alert-" + kind);
+  }
+  var MD_GAP = 16;
+  function mdScrollTo(el) {
+    mdview.scrollTop += el.getBoundingClientRect().top - mdview.getBoundingClientRect().top - MD_GAP;
+  }
+  function mdFindAnchor(anchor) {
+    let id = anchor;
+    try {
+      id = decodeURIComponent(anchor);
+    } catch {}
+    for (const k of [id, id.toLowerCase()]) {
+      const el = document.getElementById("md-" + k);
+      if (el && mdArticle.contains(el))
+        return el;
+    }
+    return null;
+  }
+  function previewLine(n) {
+    const d = doc_();
+    if (!d || mdDrawn !== d) {
+      if (d)
+        d.mdLine = n;
+      return;
+    }
+    let best = null, at = 0;
+    for (const el of mdArticle.querySelectorAll("[data-line]")) {
+      const l = +el.dataset.line;
+      if (l <= n && l > at) {
+        best = el;
+        at = l;
+      }
+    }
+    if (best)
+      mdScrollTo(best);
+    else
+      mdview.scrollTop = 0;
+  }
+  function previewTopLine() {
+    const top = mdview.getBoundingClientRect().top + MD_GAP + 8;
+    let line = 1;
+    for (const el of mdArticle.querySelectorAll("[data-line]")) {
+      if (el.getBoundingClientRect().top > top)
+        break;
+      line = +el.dataset.line;
+    }
+    return line;
+  }
+  function sourceTopLine() {
+    const top = vp.getBoundingClientRect().top;
+    for (const r of rowsEl.children)
+      if (r.getBoundingClientRect().bottom > top + 1)
+        return +r.dataset.l;
+    return 1;
+  }
+  function sourceToLine(line) {
+    vp.scrollTop = (line - 1) * LH;
+    for (let i = 0;i < 3; i++) {
+      paint();
+      const r = rowFor(line);
+      const off = r ? r.getBoundingClientRect().top - vp.getBoundingClientRect().top : 0;
+      if (Math.abs(off) < 1)
+        break;
+      vp.scrollTop += off;
+    }
+  }
+  async function mdFollow(path, anchor) {
+    const d = doc_();
+    path = path.replace(/\/+$/, "");
+    if (d && path === d.path) {
+      mdJump(anchor);
+      return;
+    }
+    if (d)
+      pushHistory(d.path, previewing(d) && mdDrawn === d ? previewTopLine() : d.cur);
+    try {
+      await api("/api/tree", { dir: path });
+      showPanel("files");
+      revealDir(path);
+      return;
+    } catch {}
+    const line = /^L(\d+)/.exec(anchor);
+    await openFile(path, line ? { line: +line[1] } : {});
+    const nd = doc_();
+    if (!nd || nd.path !== path) {
+      showToast("!", "Cannot open " + path);
+      return;
+    }
+    if (anchor && !line) {
+      const el = mdDrawn === nd && mdFindAnchor(anchor);
+      if (el)
+        mdScrollTo(el);
+      else
+        nd.mdAnchor = anchor;
+    }
+  }
+  function mdJump(anchor) {
+    const d = doc_();
+    const el = anchor && mdFindAnchor(anchor);
+    if (!d || !el)
+      return;
+    pushHistory(d.path, previewTopLine());
+    mdScrollTo(el);
+    const block = el.closest("[data-line]");
+    if (block)
+      pushHistory(d.path, +block.dataset.line);
+  }
+  function previewKey(e) {
+    const mod = e[MOD];
+    if (e.key === "Home" || isMac && mod && e.key === "ArrowUp") {
+      mdview.scrollTop = 0;
+      return true;
+    }
+    if (e.key === "End" || isMac && mod && e.key === "ArrowDown") {
+      mdview.scrollTop = mdview.scrollHeight;
+      return true;
+    }
+    let by = 0;
+    if (e.key === "ArrowDown" || e.key === "j")
+      by = 48;
+    else if (e.key === "ArrowUp" || e.key === "k")
+      by = -48;
+    else if (e.key === "PageDown")
+      by = mdview.clientHeight * 0.9;
+    else if (e.key === "PageUp")
+      by = -mdview.clientHeight * 0.9;
+    if (!by)
+      return false;
+    mdview.scrollBy({ top: by });
+    return true;
+  }
+  function selectPreview() {
+    const r = document.createRange();
+    r.selectNodeContents(mdArticle);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+  function clearPreviewMarks() {
+    const marks = $$("mark.md-hit", mdArticle);
+    for (const m of marks)
+      m.replaceWith(...m.childNodes);
+    if (marks.length)
+      mdArticle.normalize();
+  }
+  function findInPreview(q) {
+    clearPreviewMarks();
+    if (!q)
+      return 0;
+    const marks = markNodes(mdArticle, q, false, "mark");
+    for (const m of marks)
+      m.classList.add("md-hit");
+    return marks.length;
+  }
+  function showPreviewHit(i) {
+    const marks = $$("mark.md-hit", mdArticle);
+    marks.forEach((m, k) => m.classList.toggle("on", k === i));
+    const m = marks[i];
+    if (!m)
+      return;
+    const box = mdview.getBoundingClientRect(), r = m.getBoundingClientRect();
+    if (r.top < box.top + 40 || r.bottom > box.bottom - 40) {
+      mdview.scrollTop += r.top - box.top - mdview.clientHeight / 2;
+    }
+  }
+  function previewHitOffsets() {
+    const h = mdview.scrollHeight || 1, top = mdview.getBoundingClientRect().top - mdview.scrollTop;
+    const seen = new Set;
+    return $$("mark.md-hit", mdArticle).map((m) => ((m.getBoundingClientRect().top - top) / h * 100).toFixed(2)).filter((p) => !seen.has(p) && seen.add(p));
+  }
+  function scrollPreviewTo(fraction) {
+    mdview.scrollTop = fraction * mdview.scrollHeight - mdview.clientHeight / 2;
+  }
+  function initMarkdown() {
+    const sw = $("#md-switch");
+    sw.addEventListener("mousedown", (e) => e.preventDefault());
+    sw.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-md]");
+      if (b && b.dataset.md === "preview" !== previewing())
+        togglePreview();
+    });
+    mdArticle.addEventListener("click", (e) => {
+      const copy = e.target.closest(".md-copy");
+      if (copy) {
+        copyToClipboard($("pre", copy.parentElement).textContent, "Copied code block");
+        return;
+      }
+      const a = e.target.closest("a");
+      if (!a || e.button !== 0 || e[MOD] || e.shiftKey)
+        return;
+      if ("path" in a.dataset) {
+        e.preventDefault();
+        mdFollow(a.dataset.path, a.dataset.anchor || "");
+      } else if ("anchor" in a.dataset) {
+        e.preventDefault();
+        mdJump(a.dataset.anchor);
+      }
+    });
+  }
+
+  // web/src/status.js
+  function updateStatus() {
+    const d = doc_();
+    const sizeEl = $("#st-size");
+    if (sizeEl)
+      sizeEl.textContent = d ? fmtBytes(d.size) : "";
+    const isMd = !!(d && d.markdown), shown = previewing(d);
+    const mdBtn = $('[data-action="md-preview"]');
+    if (mdBtn) {
+      mdBtn.hidden = !isMd;
+      mdBtn.classList.toggle("active", shown);
+    }
+    const sw = $("#md-switch");
+    if (sw) {
+      sw.hidden = !isMd;
+      document.body.classList.toggle("md-tab", isMd);
+      for (const b of sw.children)
+        b.classList.toggle("on", isMd && b.dataset.md === "preview" === shown);
+    }
+    const idxEl = $("#st-index");
+    if (idxEl && S2.meta) {
+      idxEl.textContent = S2.meta.indexMs + "ms";
+      idxEl.title = `Workspace Indexing: took ${S2.meta.indexMs}ms to index ${S2.meta.files.toLocaleString()} files (${S2.meta.ready ? "ready" : "in progress"})`;
+    }
+    const verEl = $("#st-ver");
+    if (verEl && S2.meta?.version) {
+      verEl.textContent = "v" + S2.meta.version;
+      verEl.title = `px0 v${S2.meta.version} (Click for shortcuts & help)`;
+    }
+    drawLspStatus();
+  }
+  function setStatusNote(msg) {
+    const el = $("#st-pos");
+    if (el)
+      el.textContent = msg;
+  }
+  function fmtBytes(n) {
+    if (n < 1024)
+      return n + " B";
+    if (n < 1048576)
+      return (n / 1024).toFixed(1) + " KB";
+    return (n / 1048576).toFixed(1) + " MB";
+  }
+  function setLspState(j) {
+    if (!j || !j.state)
+      return;
+    S2.lsp.state = j.state;
+    S2.lsp.server = j.server || S2.lsp.server;
+    if ("missing" in j || j.state !== "off")
+      S2.lsp.missing = j.missing || "";
+    drawLspStatus();
+  }
+  function drawLspStatus() {
+    const el = $("#st-lsp");
+    const { state, server, missing } = S2.lsp;
+    el.title = "";
+    if (state === "off" && missing) {
+      el.dataset.state = "missing";
+      el.textContent = "LSP: set up";
+      el.title = "No language server for " + missing + ". Click to install or start one.";
+      return;
+    }
+    if (!server || state === "off") {
+      el.textContent = "";
+      el.removeAttribute("data-state");
+      return;
+    }
+    el.dataset.state = state;
+    el.textContent = state === "ready" ? server : server + " " + state;
+    if (state === "failed")
+      el.title = "The language server did not start. Click for details.";
+  }
+  function updateMetricsDisplay(m) {
+    if (!m)
+      return;
+    const cpuEl = $("#st-cpu");
+    const ramEl = $("#st-ram");
+    const contEl = $("#st-metrics");
+    if (cpuEl)
+      cpuEl.textContent = `${m.cpuUsage.toFixed(1)}%`;
+    if (ramEl)
+      ramEl.textContent = fmtBytes(m.rssBytes);
+    if (contEl) {
+      contEl.title = `Editor OS Process Usage:
+• Resident RAM (RSS): ${fmtBytes(m.rssBytes)}
+• CPU Usage: ${m.cpuUsage.toFixed(1)}%
+• Active Goroutines: ${m.goroutines || 0}`;
+    }
+  }
+  async function refreshMetrics() {
+    try {
+      const m = await api("/api/metrics");
+      updateMetricsDisplay(m);
+    } catch {}
+  }
+  function initMetrics() {
+    refreshMetrics();
+    setInterval(refreshMetrics, 2500);
+  }
+  var FIT_STEPS = 6;
+  var statusEl = $("#status");
+  function fitStatus() {
+    for (let i = 1;i <= FIT_STEPS; i++)
+      statusEl.classList.remove("fit-" + i);
+    for (let i = 1;i <= FIT_STEPS && statusEl.scrollWidth > statusEl.clientWidth; i++) {
+      statusEl.classList.add("fit-" + i);
+    }
+  }
+  function initStatusFit() {
+    new ResizeObserver(fitStatus).observe(statusEl);
+    new MutationObserver(fitStatus).observe(statusEl, { childList: true, subtree: true, characterData: true });
+    document.fonts?.ready.then(fitStatus);
+  }
+
+  // web/src/selbar.js
+  var status = $("#status");
+  var statsEl = $("#sel-stats");
+  var SEL_KEYS = { KeyC: "copy-ref", KeyA: "copy-agent", KeyU: "usages" };
+  var current = null;
+  var allText = null;
+  var allInfo = null;
+  function getSelectedRangeInfo() {
+    if (S2.selAll)
+      return allInfo;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount)
+      return null;
+    const d = doc_();
+    if (!d)
+      return null;
+    const range = sel.getRangeAt(0);
+    if (!vp.contains(range.commonAncestorContainer))
+      return null;
+    const text = sel.toString().trim();
+    if (!text)
+      return null;
+    let startEl = range.startContainer;
+    if (startEl.nodeType !== 1)
+      startEl = startEl.parentElement;
+    let endEl = range.endContainer;
+    if (endEl.nodeType !== 1)
+      endEl = endEl.parentElement;
+    const startRow = startEl ? startEl.closest(".row") : null;
+    const endRow = endEl ? endEl.closest(".row") : null;
+    let l1 = d.cur || 1, l2 = d.cur || 1;
+    if (startRow && startRow.dataset.l)
+      l1 = +startRow.dataset.l;
+    if (endRow && endRow.dataset.l)
+      l2 = +endRow.dataset.l;
+    if (l1 > l2) {
+      const tmp = l1;
+      l1 = l2;
+      l2 = tmp;
+    }
+    return { text, l1, l2, path: d.path };
+  }
+  var refOf = ({ path, l1, l2 }) => path + ":" + (l1 === l2 ? l1 : l1 + "-" + l2);
+  function showSelectionBar(info) {
+    current = info;
+    const ref = refOf(info);
+    const lines = info.l2 - info.l1 + 1;
+    statsEl.title = ref;
+    statsEl.textContent = (lines === 1 ? "1 line" : lines + " lines") + " · " + info.text.length.toLocaleString() + " chars";
+    status.classList.add("selecting");
     fitStatus();
   }
-  function forgetPreview(d) {
-    if (previewShown === d) {
-      $("#mdview")?.replaceChildren();
-      previewShown = null;
+  function hideSelectionBar() {
+    if (!current)
+      return;
+    current = null;
+    status.classList.remove("selecting");
+    fitStatus();
+  }
+  function updateSelectionBar() {
+    const info = getSelectedRangeInfo();
+    if (info)
+      showSelectionBar(info);
+    else
+      hideSelectionBar();
+  }
+  function selectAll() {
+    const d = doc_();
+    if (!d)
+      return;
+    window.getSelection()?.removeAllRanges();
+    S2.selAll = d;
+    allInfo = null;
+    render();
+    const text = allText = fetch("/api/raw?path=" + encodeURIComponent(d.path)).then((r) => {
+      if (!r.ok)
+        throw new Error(r.statusText);
+      return r.text();
+    });
+    text.then((t) => {
+      if (allText !== text)
+        return;
+      allInfo = { text: t, l1: 1, l2: d.total, path: d.path };
+      showSelectionBar(allInfo);
+    }, () => {
+      if (allText !== text)
+        return;
+      clearSelectAll();
+      showToast("!", "Could not read " + d.path);
+    });
+  }
+  function clearSelectAll() {
+    if (!S2.selAll)
+      return;
+    S2.selAll = null;
+    allText = null;
+    allInfo = null;
+    render();
+    hideSelectionBar();
+  }
+  function copySelectAll() {
+    const d = S2.selAll;
+    if (!d || !allText)
+      return false;
+    allText.then((t) => copyToClipboard(t, "Copied " + d.path + " (" + d.total.toLocaleString() + " lines)"), () => {});
+    return true;
+  }
+  function runSelectionAction(act) {
+    if (!current)
+      return false;
+    const { text, path } = current;
+    const ref = refOf(current);
+    if (act === "copy-ref") {
+      copyToClipboard(ref, "Copied " + ref);
+    } else if (act === "copy-agent") {
+      const ext = path.split(".").pop() || "";
+      copyToClipboard("### Reference: " + ref + "\n```" + ext + `
+` + text + "\n```", "Copied snippet for Agent (" + ref + ")");
+    } else if (act === "usages") {
+      findReferences(text.split(/\s+/)[0] || text);
+    } else {
+      return false;
     }
-    forgetMermaid(d.mdEl);
-    d.mdEl = null;
-    d.mdHtml = null;
+    return true;
+  }
+  function initSelectionBar() {
+    document.addEventListener("mouseup", () => setTimeout(updateSelectionBar, 20));
+    vp.addEventListener("keyup", (e) => {
+      if (e.shiftKey)
+        setTimeout(updateSelectionBar, 20);
+    });
+    document.addEventListener("selectionchange", () => {
+      if (current)
+        updateSelectionBar();
+    });
+    document.addEventListener("mousedown", (e) => {
+      if (!S2.selAll || e.target.closest?.("#footer-sel"))
+        return;
+      if (e.target === vp && (e.offsetX >= vp.clientWidth || e.offsetY >= vp.clientHeight))
+        return;
+      clearSelectAll();
+    }, true);
+    const bar = $("#footer-sel");
+    bar.addEventListener("mousedown", (e) => e.preventDefault());
+    bar.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-sel]");
+      if (btn)
+        runSelectionAction(btn.dataset.sel);
+    });
   }
 
   // web/src/tabs.js
-  setPreviewLinkOpener(openFile);
   var closedTabs = [];
   var MAX_CLOSED = 20;
   async function openFile(path, opts = {}) {
-    const { line, push = true, col, source } = opts;
+    const { line, push = true, col } = opts;
     let idx = S2.tabs.findIndex((t) => t.path === path);
     if (idx < 0) {
       let j;
@@ -2654,7 +2975,6 @@
         showImage(path);
         return;
       }
-      const renderPreview = isMarkdown(path) && S2.mdPreview && !source;
       const d = {
         path,
         name: path.split("/").pop(),
@@ -2670,10 +2990,7 @@
         cur: line || 1,
         outline: null,
         gen: 0,
-        mode: renderPreview ? "preview" : "source",
-        mdHtml: null,
-        mdEl: null,
-        mdScroll: 0
+        markdown: !!j.markdown
       };
       for (let i = 0;i < j.lines.length; i++)
         d.lines[j.start + i] = j.lines[i];
@@ -2682,8 +2999,6 @@
       idx = S2.tabs.length - 1;
       if (j.refine)
         refineChunk(d, start / CHUNK);
-      if (d.mode === "preview")
-        loadPreview(d);
     }
     const prev = doc_();
     if (prev && prev !== S2.tabs[idx])
@@ -2692,10 +3007,9 @@
       clearSelectAll();
     S2.active = idx;
     const d = S2.tabs[idx];
-    if (source && d.mode === "preview")
-      setTabMode(d, "source", false);
     $("#empty").hidden = true;
     hideImage();
+    syncPreview();
     if (!S2.at || S2.at.path !== d.path)
       S2.at = null;
     S2.lsp.state = d.lsp && d.lsp.state || "off";
@@ -2704,7 +3018,6 @@
     warmLSP(d);
     drawTabs();
     drawCrumbs();
-    syncPreview();
     layout();
     if (line) {
       d.cur = line;
@@ -2719,62 +3032,17 @@
       pushHistory(path, line || d.cur, col);
   }
   function centerLine(n) {
+    if (previewing()) {
+      previewLine(n);
+      return;
+    }
     const y = (n - 1) * LH - Math.max(0, vp.clientHeight / 2 - LH * 2);
     vp.scrollTop = Math.max(0, y);
-  }
-  function togglePreview() {
-    const d = doc_();
-    if (!d)
-      return;
-    if (!isMarkdown(d.path)) {
-      showToast("Preview", "Markdown preview only applies to .md files");
-      return;
-    }
-    const next = d.mode === "preview" ? "source" : "preview";
-    setTabMode(d, next, true);
-    if (next === "preview") {
-      clearLink();
-      clearFind();
-      clearSelectAll();
-    }
-    syncPreview();
-    layout();
-    render();
-    updateStatus();
-    if (next === "preview" && d.mdHtml == null)
-      loadPreview(d);
-  }
-  function setTabMode(d, mode, persist = false) {
-    if (!d || d.mode === mode)
-      return;
-    d.mode = mode;
-    if (!persist)
-      return;
-    S2.mdPreview = mode === "preview";
-    try {
-      localStorage.setItem("px0.mdPreview", S2.mdPreview ? "true" : "false");
-    } catch {}
-  }
-  function gotoLine(line) {
-    const d = doc_();
-    if (!d)
-      return;
-    if (d.mode === "preview") {
-      setTabMode(d, "source", false);
-      syncPreview();
-      layout();
-    }
-    d.cur = Math.max(1, Math.min(line, d.total));
-    centerLine(d.cur);
-    render();
-    updateStatus();
-    pushHistory(d.path, d.cur);
   }
   function closeTab(i) {
     clearSelectAll();
     const [closed] = S2.tabs.splice(i, 1);
     if (closed) {
-      forgetPreview(closed);
       if (closed.path) {
         const scrollTop = i === S2.active ? vp.scrollTop : closed.scrollTop;
         closedTabs.push({ path: closed.path, cur: closed.cur, scrollTop });
@@ -2790,20 +3058,20 @@
     }
     if (S2.tabs.length === 0) {
       S2.active = -1;
+      syncPreview();
       rowsEl.innerHTML = "";
       sizer.style.height = "0px";
       $("#empty").hidden = false;
       drawCrumbs();
       drawTabs();
-      syncPreview();
       updateStatus();
       return;
     }
     S2.active = Math.min(i, S2.tabs.length - 1);
     const d = doc_();
+    syncPreview();
     drawTabs();
     drawCrumbs();
-    syncPreview();
     layout();
     vp.scrollTop = d.scrollTop;
     render();
@@ -2837,6 +3105,7 @@
     if (prev)
       prev.scrollTop = vp.scrollTop;
     S2.active = i;
+    syncPreview();
     clearFind();
     clearSelectAll();
     S2.at = null;
@@ -2846,7 +3115,6 @@
     warmLSP(S2.tabs[i]);
     drawTabs();
     drawCrumbs();
-    syncPreview();
     layout();
     vp.scrollTop = S2.tabs[i].scrollTop;
     render();
@@ -3045,7 +3313,7 @@
         toggleWordWrap();
       else if (act === "line-numbers")
         toggleLineNumbers();
-      else if (act === "preview")
+      else if (act === "md-preview")
         togglePreview();
       else if (act === "palette")
         openPalette("command");
@@ -3054,7 +3322,6 @@
     });
     addEventListener("keydown", (e) => {
       const mod = e[MOD];
-      const preview = doc_()?.mode === "preview";
       if (e.key === "Escape") {
         if (!overlay.hidden) {
           closePalette();
@@ -3186,16 +3453,9 @@
         switchTab(+e.code.slice(5) - 1);
         return;
       }
-      if (e.altKey && !mod && !e.shiftKey && SEL_KEYS[e.code]) {
-        if (preview) {
-          e.preventDefault();
-          showToast("Preview", withKeys("Switch to Source for selection actions ({Alt+M})"));
-          return;
-        }
-        if (runSelectionAction(SEL_KEYS[e.code])) {
-          e.preventDefault();
-          return;
-        }
+      if (e.altKey && !mod && !e.shiftKey && SEL_KEYS[e.code] && runSelectionAction(SEL_KEYS[e.code])) {
+        e.preventDefault();
+        return;
       }
       if (e.altKey && e.code === "KeyZ") {
         e.preventDefault();
@@ -3215,12 +3475,15 @@
       if (inField(document.activeElement))
         return;
       const plainMod = mod && !e.shiftKey && !e.altKey;
-      if (plainMod && (e.key === "a" || e.key === "A") && !preview) {
+      if (plainMod && (e.key === "a" || e.key === "A")) {
         e.preventDefault();
-        selectAll();
+        if (previewing())
+          selectPreview();
+        else
+          selectAll();
         return;
       }
-      if (plainMod && (e.key === "c" || e.key === "C") && !preview && copySelectAll()) {
+      if (plainMod && (e.key === "c" || e.key === "C") && copySelectAll()) {
         e.preventDefault();
         return;
       }
@@ -3229,11 +3492,14 @@
         showHelp();
         return;
       }
-      if (preview && (e.key.startsWith("Arrow") || e.key === "PageDown" || e.key === "PageUp" || e.key === "Home" || e.key === "End"))
-        return;
       const d = doc_();
       if (!d)
         return;
+      if (previewing(d)) {
+        if (previewKey(e))
+          e.preventDefault();
+        return;
+      }
       const toTop = () => {
         vp.scrollTop = 0;
         d.cur = 1;
@@ -3340,7 +3606,7 @@
     } },
     { name: withKeys("Toggle Word Wrap ({Alt+Z})"), run: () => toggleWordWrap() },
     { name: withKeys("Toggle Line Numbers ({Alt+L})"), run: () => toggleLineNumbers() },
-    { name: withKeys("Markdown: Toggle Preview ({Alt+M})"), run: () => togglePreview() },
+    { name: withKeys("Toggle Markdown Preview ({Alt+M})"), run: () => togglePreview() },
     { name: withKeys("Toggle Sidebar ({Mod+B})"), run: () => document.body.classList.toggle("side-hidden") },
     { name: "Select Theme…", run: () => openPalette("theme") },
     { name: "Next Theme", run: cycleTheme },
@@ -3488,9 +3754,16 @@
     closePalette();
     if (it.kind === "file")
       openFile(it.path);
-    else if (it.kind === "sym" || it.kind === "line")
-      gotoLine(it.n);
-    else if (it.kind === "cmd")
+    else if (it.kind === "sym" || it.kind === "line") {
+      const d = doc_();
+      if (!d)
+        return;
+      d.cur = it.n;
+      centerLine(it.n);
+      render();
+      updateStatus();
+      pushHistory(d.path, it.n);
+    } else if (it.kind === "cmd")
       it.cmd.run();
     else if (it.kind === "theme")
       setTheme(it.id);
@@ -3543,6 +3816,7 @@
   initFind();
   initPalette();
   initShortcuts();
+  initMarkdown();
   initMetrics();
   initStatusFit();
   (async function boot() {

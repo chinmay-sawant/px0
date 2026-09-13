@@ -2,11 +2,9 @@ package main
 
 import (
 	"compress/gzip"
-	"container/list"
 	"context"
 	"embed"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/fs"
 	"mime"
@@ -60,9 +58,9 @@ func NewServer(ix *Index, lsp *lspManager) *Server {
 	s.mux.HandleFunc("/api/tree", s.handleTree)
 	s.mux.HandleFunc("/api/find", s.handleFind)
 	s.mux.HandleFunc("/api/file", s.handleFile)
-	s.mux.HandleFunc("/api/md", s.handleMD)
 	s.mux.HandleFunc("/api/close", s.handleClose)
 	s.mux.HandleFunc("/api/raw", s.handleRaw)
+	s.mux.HandleFunc("/api/markdown", s.handleMarkdown)
 	s.mux.HandleFunc("/api/search", s.handleSearch)
 	s.mux.HandleFunc("/api/outline", s.handleOutline)
 	s.mux.HandleFunc("/api/def", s.handleDef)
@@ -496,152 +494,9 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		"path": rel, "lang": d.Lang, "total": d.Total, "maxCols": d.MaxCols,
 		"start": start, "lines": lines, "size": st.Size(),
 		"exact": exact, "refine": !exact && coming,
-		"lsp": s.lspBrief(rel),
+		"markdown": isMarkdown(rel),
+		"lsp":      s.lspBrief(rel),
 	})
-}
-
-// ------------------------------------------------------------------ md cache
-
-const (
-	// mdRenderMaxBytes caps what /api/md will read and render. Unlike a file
-	// open, preview renders the whole document in one pass, so the cap trades
-	// the O(1)-open guarantee for a bounded, user-initiated cost (plan D9);
-	// oversized files are refused rather than truncated.
-	mdRenderMaxBytes = 2 << 20
-
-	// mdRenderCacheBudget bounds the rendered fragments kept around. A 2 MB
-	// document can render to several times its source size, and fragments are
-	// bigger per file than source, so the budget sits well under the highlight
-	// cache's 512 MB while still holding a handful of large previews.
-	mdRenderCacheBudget = 64 << 20
-)
-
-// mdRenderCache is the LRU for rendered Markdown. It mirrors hlCache in
-// highlight.go: keyed on absolute path + mtime + size so an edited file misses
-// and a reopened one hits. Values are []byte rather than *Doc, so it cannot
-// share hlCache's map.
-type mdRenderCache struct {
-	mu    sync.Mutex
-	ll    *list.List
-	items map[string]*list.Element
-	used  int
-}
-
-type mdCacheEntry struct {
-	key  string
-	html []byte
-}
-
-var mdRendered = &mdRenderCache{ll: list.New(), items: map[string]*list.Element{}}
-
-func mdCacheEntryBytes(html []byte) int {
-	return len(html) + 64 // slice header plus list/map entry overhead
-}
-
-func (c *mdRenderCache) get(key string) []byte {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if el, ok := c.items[key]; ok {
-		c.ll.MoveToFront(el)
-		return el.Value.(*mdCacheEntry).html
-	}
-	return nil
-}
-
-func (c *mdRenderCache) put(key string, html []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if el, ok := c.items[key]; ok {
-		c.ll.MoveToFront(el)
-		return
-	}
-	c.items[key] = c.ll.PushFront(&mdCacheEntry{key: key, html: html})
-	c.used += mdCacheEntryBytes(html)
-	c.evict()
-}
-
-// remove drops every rendering of a file by absolute path, for /api/close.
-func (c *mdRenderCache) remove(abs string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	prefix := abs + "|"
-	removed := false
-	for k, el := range c.items {
-		if strings.HasPrefix(k, prefix) {
-			c.ll.Remove(el)
-			delete(c.items, k)
-			c.used -= mdCacheEntryBytes(el.Value.(*mdCacheEntry).html)
-			removed = true
-		}
-	}
-	return removed
-}
-
-// evict drops the least recently used fragments until the cache fits. The most
-// recent entry is never evicted, so the document being rendered always
-// survives.
-func (c *mdRenderCache) evict() {
-	for c.used > mdRenderCacheBudget && c.ll.Len() > 1 {
-		back := c.ll.Back()
-		it := back.Value.(*mdCacheEntry)
-		c.ll.Remove(back)
-		delete(c.items, it.key)
-		c.used -= mdCacheEntryBytes(it.html)
-	}
-}
-
-// handleMD renders one Markdown file into the HTML fragment the preview pane
-// shows. Confinement matches handleFile; the size cap is much smaller because
-// the whole file is read and rendered at once, and the fragment is memoised on
-// path+mtime+size like highlighted documents.
-func (s *Server) handleMD(w http.ResponseWriter, r *http.Request) {
-	abs, rel, ok := s.resolvePath(r.URL.Query().Get("path"))
-	if !ok {
-		fail(w, 400, "bad path")
-		return
-	}
-	switch strings.ToLower(filepath.Ext(rel)) {
-	case ".md", ".markdown":
-	default:
-		fail(w, 415, "not a markdown file")
-		return
-	}
-	st, err := os.Stat(abs)
-	if err != nil {
-		fail(w, 404, err.Error())
-		return
-	}
-	if st.IsDir() {
-		fail(w, 415, "is a directory")
-		return
-	}
-	if st.Size() > mdRenderMaxBytes {
-		fail(w, 413, fmt.Sprintf("file too large to render: %d bytes (max %d); open it as source", st.Size(), mdRenderMaxBytes))
-		return
-	}
-	key := fmt.Sprintf("%s|%d|%d", abs, st.ModTime().UnixNano(), st.Size())
-	if html := mdRendered.get(key); html != nil {
-		writeJSON(w, map[string]any{"path": rel, "size": st.Size(), "html": string(html)})
-		return
-	}
-	src, err := os.ReadFile(abs)
-	if err != nil {
-		fail(w, 500, err.Error())
-		return
-	}
-	// Relative links and images resolve against the file's directory, which
-	// the renderer expects relative to the workspace root.
-	dir := filepath.ToSlash(filepath.Dir(rel))
-	if dir == "." {
-		dir = ""
-	}
-	html, err := renderMarkdown(src, dir)
-	if err != nil {
-		fail(w, 500, err.Error())
-		return
-	}
-	mdRendered.put(key, html)
-	writeJSON(w, map[string]any{"path": rel, "size": st.Size(), "html": string(html)})
 }
 
 func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
@@ -652,7 +507,6 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	Evict(abs)
-	mdRendered.remove(abs)
 	s.lsp.CloseDoc(abs, rel)
 	debug.FreeOSMemory()
 	writeJSON(w, map[string]any{"ok": true, "path": rel})

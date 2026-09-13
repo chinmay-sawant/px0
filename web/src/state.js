@@ -73,10 +73,7 @@ export const S = {
   chW: 7.8,
   wrap: true,        // word wrap (default ON)
   lineNumbers: true, // line numbers gutter (default ON)
-  mdPreview: true,   // open .md rendered (default ON); see web/src/md.js
+  mdPreview: true,   // Markdown tabs open rendered (default ON)
 };
 
 export const doc_ = () => (S.active >= 0 ? S.tabs[S.active] : null);
-
-// The files the server can render as Markdown (GET /api/md).
-export const isMarkdown = p => /\.(md|markdown)$/i.test(p || '');

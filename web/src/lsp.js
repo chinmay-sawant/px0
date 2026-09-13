@@ -1,6 +1,5 @@
 // web/src/lsp.js
-import { $, S, doc_, api, withKeys } from './state.js';
-import { showToast } from './ui.js';
+import { $, S, doc_, api } from './state.js';
 import { paint } from './renderer.js';
 import { updateStatus, setStatusNote, setLspState } from './status.js';
 import { openFile } from './tabs.js';
@@ -58,10 +57,8 @@ export async function lspCall(kind, at, waitMs) {
 
 export async function gotoDefinition(arg) {
   const d = doc_();
-  if (!d) return;
-  if (d.mode === 'preview') { showToast('Preview', withKeys('Switch to Source for definitions ({Alt+M})')); return; }
   const at = (arg && arg.word) ? arg : positionNow(typeof arg === 'string' ? arg : S.lastWord);
-  if (!at) return;
+  if (!d || !at) return;
 
   if (canAskServer(at)) {
     setStatusNote('definition of ' + at.word + '…');
@@ -93,17 +90,15 @@ export async function gotoDefinition(arg) {
 
 export async function findReferences(arg) {
   const d = doc_();
-  if (!d) return;
-  if (d.mode === 'preview') { showToast('Preview', withKeys('Switch to Source for references ({Alt+M})')); return; }
   const at = (arg && arg.word) ? arg : positionNow(typeof arg === 'string' ? arg : S.lastWord);
-  if (!at) return;
+  if (!d || !at) return;
   inspectReferences(at);
 }
 
 export function acceptHits(word, hits, server, noun, refCount) {
   if (hits.length === 1) {
     const h = hits[0];
-    openFile(h.path, { line: h.line, source: true });   // land on the line, not on a preview
+    openFile(h.path, { line: h.line });
     flashFind(h.mid || word);
     setStatusNote(server ? server + ' · ' + h.path + ':' + h.line : h.path + ':' + h.line);
     return;
