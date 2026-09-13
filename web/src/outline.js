@@ -1,9 +1,7 @@
 // web/src/outline.js
 import { $, $$, esc, S, doc_, api } from './state.js';
-import { centerLine } from './tabs.js';
-import { render } from './renderer.js';
-import { updateStatus, setLspState } from './status.js';
-import { pushHistory } from './history.js';
+import { gotoLine } from './tabs.js';
+import { setLspState } from './status.js';
 
 export async function loadOutline() {
   const d = doc_();
@@ -79,9 +77,7 @@ export function initOutline() {
     if (!s) return;
     $$('.sym.sel').forEach(x => x.classList.remove('sel'));
     s.classList.add('sel');
-    const d = doc_(); if (!d) return;
-    d.cur = +s.dataset.n; centerLine(d.cur); render(); updateStatus();
-    pushHistory(d.path, d.cur);
+    gotoLine(+s.dataset.n);   // leaves preview for source when needed
   });
   $('#outline-filter')?.addEventListener('input', drawOutline);
 }

@@ -1,6 +1,6 @@
 // web/src/tabs.js
-import { $, esc, S, doc_, api, LH, CHUNK, withKeys } from './state.js';
-import { vp, sizer, rowsEl, editor } from './ui.js';
+import { $, esc, S, doc_, api, LH, CHUNK, withKeys, isMarkdown } from './state.js';
+import { vp, sizer, rowsEl, editor, showToast } from './ui.js';
 import { render, layout, refineChunk } from './renderer.js';
 import { updateStatus, setStatusNote, refreshMetrics } from './status.js';
 import { pushHistory } from './history.js';
@@ -11,13 +11,20 @@ import { revealDir } from './tree.js';
 import { clearLink } from './hover.js';
 import { clearFind } from './find.js';
 import { clearSelectAll } from './selbar.js';
+import { loadPreview, syncPreview, forgetPreview, setPreviewLinkOpener } from './md.js';
 
-// Recently closed files, newest last, for Alt+Shift+T.
+// Rendered previews route relative link clicks through openFile; registered
+// here so md.js stays free of a circular import back into this module.
+setPreviewLinkOpener(openFile);
+
+// Recently closed files, newest last, for Alt+Shift+T. Only path, caret and
+// scroll are kept, so a reopened Markdown tab re-seeds its mode from the
+// px0.mdPreview preference (see openFile) rather than restoring source/preview.
 const closedTabs = [];
 const MAX_CLOSED = 20;
 
 export async function openFile(path, opts = {}) {
-  const { line, push = true, col } = opts;
+  const { line, push = true, col, source } = opts;
   let idx = S.tabs.findIndex(t => t.path === path);
   if (idx < 0) {
     let j;
@@ -32,23 +39,31 @@ export async function openFile(path, opts = {}) {
       showImage(path);
       return;
     }
+    const renderPreview = isMarkdown(path) && S.mdPreview && !source;
     const d = {
       path, name: path.split('/').pop(), lang: j.lang, total: j.total, maxCols: j.maxCols,
       size: j.size, lines: new Array(j.total), chunks: new Set([start / CHUNK]),
       pending: new Set(), refining: new Set(), scrollTop: 0, cur: line || 1,
       outline: null, gen: 0,
+      // Rendered preview state, only meaningful for .md/.markdown (web/src/md.js).
+      mode: renderPreview ? 'preview' : 'source', mdHtml: null, mdEl: null, mdScroll: 0,
     };
     for (let i = 0; i < j.lines.length; i++) d.lines[j.start + i] = j.lines[i];
     d.lsp = j.lsp || { state: 'off', server: '' };
     S.tabs.push(d);
     idx = S.tabs.length - 1;
     if (j.refine) refineChunk(d, start / CHUNK);
+    if (d.mode === 'preview') loadPreview(d);
   }
   const prev = doc_();
   if (prev && prev !== S.tabs[idx]) prev.scrollTop = vp.scrollTop;
   if (prev !== S.tabs[idx]) clearSelectAll();
   S.active = idx;
   const d = S.tabs[idx];
+
+  // Callers that jump to a line ask for source: a rendered preview has no line
+  // to land on, and the preference has already done its job for the open.
+  if (source && d.mode === 'preview') setTabMode(d, 'source', false);
 
   $('#empty').hidden = true;
   hideImage();
@@ -57,7 +72,7 @@ export async function openFile(path, opts = {}) {
   S.lsp.server = (d.lsp && d.lsp.server) || '';
   S.lsp.missing = (d.lsp && d.lsp.missing) || '';
   warmLSP(d);
-  drawTabs(); drawCrumbs(); layout();
+  drawTabs(); drawCrumbs(); syncPreview(); layout();
 
   if (line) { d.cur = line; centerLine(line); }
   else vp.scrollTop = d.scrollTop;
@@ -72,10 +87,52 @@ export function centerLine(n) {
   vp.scrollTop = Math.max(0, y);
 }
 
+/* Alt+M, the footer button and the palette command: flip the active tab
+   between source and rendered Markdown, and remember the choice for the next
+   .md open. Failure to fetch the render falls back to source in md.js. */
+export function togglePreview() {
+  const d = doc_();
+  if (!d) return;
+  if (!isMarkdown(d.path)) { showToast('Preview', 'Markdown preview only applies to .md files'); return; }
+  const next = d.mode === 'preview' ? 'source' : 'preview';
+  setTabMode(d, next, true);
+  // Preview has its own selection model: drop source-side selection chrome.
+  if (next === 'preview') { clearLink(); clearFind(); clearSelectAll(); }
+  syncPreview();
+  layout();
+  render();
+  updateStatus();
+  if (next === 'preview' && d.mdHtml == null) loadPreview(d);
+}
+
+/* persist=true stores the preference (the toggle); jump-induced switches pass
+   false, so leaving preview to land on a line does not rewrite the default. */
+export function setTabMode(d, mode, persist = false) {
+  if (!d || d.mode === mode) return;
+  d.mode = mode;
+  if (!persist) return;
+  S.mdPreview = mode === 'preview';
+  try { localStorage.setItem('px0.mdPreview', S.mdPreview ? 'true' : 'false'); } catch {}
+}
+
+/* Line jumps (outline, inspector, palette, references, history) use this so a
+   preview tab shows the line in source instead of silently ignoring it. */
+export function gotoLine(line) {
+  const d = doc_();
+  if (!d) return;
+  if (d.mode === 'preview') { setTabMode(d, 'source', false); syncPreview(); layout(); }
+  d.cur = Math.max(1, Math.min(line, d.total));
+  centerLine(d.cur);
+  render();
+  updateStatus();
+  pushHistory(d.path, d.cur);
+}
+
 export function closeTab(i) {
   clearSelectAll();
   const [closed] = S.tabs.splice(i, 1);
   if (closed) {
+    forgetPreview(closed);
     if (closed.path) {
       // The active tab's scrollTop is only saved on switch, so read the live one.
       const scrollTop = i === S.active ? vp.scrollTop : closed.scrollTop;
@@ -96,16 +153,18 @@ export function closeTab(i) {
     S.active = -1;
     rowsEl.innerHTML = ''; sizer.style.height = '0px';
     $('#empty').hidden = false; drawCrumbs();
-    drawTabs(); updateStatus();
+    drawTabs(); syncPreview(); updateStatus();
     return;
   }
   S.active = Math.min(i, S.tabs.length - 1);
   const d = doc_();
-  drawTabs(); drawCrumbs(); layout();
+  drawTabs(); drawCrumbs(); syncPreview(); layout();
   vp.scrollTop = d.scrollTop; render(); updateStatus();
 }
 
-// Reopens the most recently closed file that is not open already, where it was left.
+// Reopens the most recently closed file that is not open already, where it was
+// left. A Markdown tab re-seeds source/preview from the px0.mdPreview
+// preference: closedTabs stores path, caret and scroll only.
 export async function reopenClosedTab() {
   while (closedTabs.length) {
     const t = closedTabs.pop();
@@ -139,7 +198,7 @@ export function switchTab(i) {
   S.lsp.server = (S.tabs[i].lsp && S.tabs[i].lsp.server) || '';
   S.lsp.missing = (S.tabs[i].lsp && S.tabs[i].lsp.missing) || '';
   warmLSP(S.tabs[i]);
-  drawTabs(); drawCrumbs(); layout();
+  drawTabs(); drawCrumbs(); syncPreview(); layout();
   vp.scrollTop = S.tabs[i].scrollTop;
   render(); updateStatus();
   if ($('#panel-outline')?.classList.contains('active')) loadOutline();

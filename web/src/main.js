@@ -50,6 +50,10 @@ initStatusFit();
     S.lineNumbers = linesPref !== null ? linesPref === 'true' : true;
     document.body.classList.toggle('hide-lines', !S.lineNumbers);
 
+    // Markdown preview preference (default ON: .md opens rendered)
+    const mdPref = localStorage.getItem('px0.mdPreview');
+    S.mdPreview = mdPref !== null ? mdPref === 'true' : true;
+
     updateEditorOptionControls();
   } catch {}
 

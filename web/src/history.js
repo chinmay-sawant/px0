@@ -16,5 +16,7 @@ export function go(delta) {
   if (i < 0 || i >= S.hist.length) return;
   S.histIdx = i;
   const h = S.hist[i];
-  openFile(h.path, { line: h.line, push: false });
+  // History entries point at lines, so land in source; the saved preview
+  // preference is untouched.
+  openFile(h.path, { line: h.line, push: false, source: true });
 }

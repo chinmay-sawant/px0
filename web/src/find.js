@@ -1,6 +1,6 @@
 // web/src/find.js
-import { $, S, doc_, api, debounce, LH } from './state.js';
-import { vp } from './ui.js';
+import { $, S, doc_, api, debounce, withKeys, LH } from './state.js';
+import { vp, showToast } from './ui.js';
 import { render, paint } from './renderer.js';
 import { centerLine } from './tabs.js';
 import { updateStatus } from './status.js';
@@ -21,7 +21,10 @@ function editorSelection() {
 /* Seed priority: live editor selection, then the query already in an open
    findbar, then the caller's fallback (the last double-clicked word). */
 export function openFind(seed) {
-  if (!doc_()) return;
+  const d = doc_();
+  if (!d) return;
+  // The find bar searches source offsets; a rendered preview has none.
+  if (d.mode === 'preview') { showToast('Preview', withKeys('Switch to Source to find ({Alt+M})')); return; }
   const sel = editorSelection();
   if (sel) findInput.value = sel;
   else if (findbar.hidden && seed) findInput.value = seed;

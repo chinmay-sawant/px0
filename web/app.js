@@ -69,9 +69,11 @@
     gen: 0,
     chW: 7.8,
     wrap: true,
-    lineNumbers: true
+    lineNumbers: true,
+    mdPreview: true
   };
   var doc_ = () => S2.active >= 0 ? S2.tabs[S2.active] : null;
+  var isMarkdown = (p) => /\.(md|markdown)$/i.test(p || "");
 
   // web/src/ui.js
   var vp = $("#viewport");
@@ -119,7 +121,7 @@
   }
   function layout() {
     const d = doc_();
-    if (!d)
+    if (!d || d.mode === "preview")
       return;
     const digits = String(d.total).length;
     editor.style.setProperty("--gw", digits);
@@ -156,9 +158,18 @@
     const linesBtn = $('[data-action="line-numbers"]');
     if (linesBtn)
       linesBtn.classList.toggle("active", !!S2.lineNumbers);
+    const mdBtn = $('[data-action="preview"]');
+    if (mdBtn) {
+      const d = doc_();
+      const md = !!d && isMarkdown(d.path);
+      mdBtn.hidden = !md;
+      mdBtn.classList.toggle("active", md && d.mode === "preview");
+    }
   }
   var raf = 0;
   function render() {
+    if (doc_()?.mode === "preview")
+      return;
     if (raf)
       return;
     raf = requestAnimationFrame(() => {
@@ -168,7 +179,7 @@
   }
   function paint() {
     const d = doc_();
-    if (!d) {
+    if (!d || d.mode === "preview") {
       const c = $("#caret");
       if (c)
         c.hidden = true;
@@ -255,11 +266,11 @@
   }
   function toPos(node, off) {
     if (node === rowsEl) {
-      const row2 = rowsEl.children[off] || rowsEl.lastElementChild;
-      if (!row2)
+      const row = rowsEl.children[off] || rowsEl.lastElementChild;
+      if (!row)
         return null;
       const atEnd = !rowsEl.children[off];
-      return { line: +row2.dataset.l, col: atEnd ? $(".c", row2).textContent.length : 0 };
+      return { line: +row.dataset.l, col: atEnd ? $(".c", row).textContent.length : 0 };
     }
     const el = node.nodeType === 1 ? node : node.parentElement;
     const row = el && el.closest(".row");
@@ -387,6 +398,8 @@
     return null;
   }
   function ensureChunks(d, first, last) {
+    if (!d || d.mode === "preview")
+      return;
     const c0 = Math.floor(first / CHUNK), c1 = Math.floor(Math.max(first, last - 1) / CHUNK);
     for (let c = c0;c <= c1; c++) {
       if (d.chunks.has(c) || d.pending.has(c))
@@ -571,7 +584,7 @@
       return;
     S2.histIdx = i;
     const h = S2.hist[i];
-    openFile(h.path, { line: h.line, push: false });
+    openFile(h.path, { line: h.line, push: false, source: true });
   }
 
   // web/src/outline.js
@@ -683,14 +696,7 @@
         return;
       $$(".sym.sel").forEach((x) => x.classList.remove("sel"));
       s.classList.add("sel");
-      const d = doc_();
-      if (!d)
-        return;
-      d.cur = +s.dataset.n;
-      centerLine(d.cur);
-      render();
-      updateStatus();
-      pushHistory(d.path, d.cur);
+      gotoLine(+s.dataset.n);
     });
     $("#outline-filter")?.addEventListener("input", drawOutline);
   }
@@ -942,7 +948,7 @@
       if (r) {
         $$(".rline.sel", resultsEl).forEach((x) => x.classList.remove("sel"));
         r.classList.add("sel");
-        openFile(r.dataset.p, { line: +r.dataset.n });
+        openFile(r.dataset.p, { line: +r.dataset.n, source: true });
         const q = $("#q").value;
         if (q)
           flashFind(q);
@@ -1093,14 +1099,7 @@
         return;
       $$("#right-symbols-list .sym.sel, #outline .sym.sel").forEach((x) => x.classList.remove("sel"));
       s.classList.add("sel");
-      const d = doc_();
-      if (!d)
-        return;
-      d.cur = +s.dataset.n;
-      centerLine(d.cur);
-      render();
-      updateStatus();
-      pushHistory(d.path, d.cur);
+      gotoLine(+s.dataset.n);
     });
     $("#right-symbols-filter")?.addEventListener("input", drawOutline);
     $("#right-refs-list")?.addEventListener("click", (e) => {
@@ -1119,7 +1118,7 @@
       if (r) {
         $$("#right-refs-list .rline.sel").forEach((x) => x.classList.remove("sel"));
         r.classList.add("sel");
-        openFile(r.dataset.p, { line: +r.dataset.n });
+        openFile(r.dataset.p, { line: +r.dataset.n, source: true });
         const targetEl = $("#right-ref-target");
         if (targetEl && targetEl.textContent)
           flashFind(targetEl.textContent);
@@ -1175,8 +1174,14 @@
   }
   async function gotoDefinition(arg) {
     const d = doc_();
+    if (!d)
+      return;
+    if (d.mode === "preview") {
+      showToast("Preview", withKeys("Switch to Source for definitions ({Alt+M})"));
+      return;
+    }
     const at = arg && arg.word ? arg : positionNow(typeof arg === "string" ? arg : S2.lastWord);
-    if (!d || !at)
+    if (!at)
       return;
     if (canAskServer(at)) {
       setStatusNote("definition of " + at.word + "…");
@@ -1217,15 +1222,21 @@
   }
   async function findReferences(arg) {
     const d = doc_();
+    if (!d)
+      return;
+    if (d.mode === "preview") {
+      showToast("Preview", withKeys("Switch to Source for references ({Alt+M})"));
+      return;
+    }
     const at = arg && arg.word ? arg : positionNow(typeof arg === "string" ? arg : S2.lastWord);
-    if (!d || !at)
+    if (!at)
       return;
     inspectReferences(at);
   }
   function acceptHits(word, hits, server, noun, refCount) {
     if (hits.length === 1) {
       const h = hits[0];
-      openFile(h.path, { line: h.line });
+      openFile(h.path, { line: h.line, source: true });
       flashFind(h.mid || word);
       setStatusNote(server ? server + " · " + h.path + ":" + h.line : h.path + ":" + h.line);
       return;
@@ -1311,11 +1322,11 @@
       node = p.offsetNode;
       off = p.offset;
     } else if (document.caretRangeFromPoint) {
-      const r2 = document.caretRangeFromPoint(x, y);
-      if (!r2)
+      const r = document.caretRangeFromPoint(x, y);
+      if (!r)
         return null;
-      node = r2.startContainer;
-      off = r2.startOffset;
+      node = r.startContainer;
+      off = r.startOffset;
     } else
       return null;
     const el = node && (node.nodeType === 1 ? node : node.parentElement);
@@ -1596,6 +1607,10 @@
   }
   async function showCalls(arg) {
     const d = doc_();
+    if (d && d.mode === "preview") {
+      showToast("Preview", withKeys("Switch to Source for the call trail ({Alt+M})"));
+      return;
+    }
     const at = arg && arg.word ? arg : positionNow(typeof arg === "string" ? arg : S2.lastWord);
     showRightInspector("calls");
     cancelLspSetup();
@@ -1740,7 +1755,7 @@
       $$("#right-calls-list .cnode.sel").forEach((x) => x.classList.remove("sel"));
       row.classList.add("sel");
       const t = target(node);
-      await openFile(t.path, { line: t.line });
+      await openFile(t.path, { line: t.line, source: true });
       const called = T && T.dir === "in" && node.parent ? node.parent.n.name : node.n.name;
       flashFind(called);
     });
@@ -1799,14 +1814,14 @@
     const d = doc_();
     if (!d || at.path !== d.path)
       return;
-    const seq2 = ++hoverSeq;
+    const seq = ++hoverSeq;
     let j;
     try {
       j = await api("/api/lsp/hover", { path: d.path, line: at.line, col: at.col, wait: 4000 });
     } catch {
       return;
     }
-    if (seq2 !== hoverSeq || doc_() !== d)
+    if (seq !== hoverSeq || doc_() !== d)
       return;
     setLspState(j);
     if (!j || j.empty || !j.signature && !j.doc)
@@ -1932,8 +1947,13 @@
     return line ? line.trim() : "";
   }
   function openFind(seed) {
-    if (!doc_())
+    const d = doc_();
+    if (!d)
       return;
+    if (d.mode === "preview") {
+      showToast("Preview", withKeys("Switch to Source to find ({Alt+M})"));
+      return;
+    }
     const sel = editorSelection();
     if (sel)
       findInput.value = sel;
@@ -2188,17 +2208,444 @@
     });
   }
 
+  // web/src/mermaid.js
+  var MERMAID_VERSION = "11.17.2";
+  var MERMAID_URL = "/static/lib/mermaid/" + MERMAID_VERSION + "/mermaid.esm.min.mjs";
+  var MAX_BLOCKS = 50;
+  var MAX_CHARS = 2000;
+  var mermaidPromise = null;
+  var mermaidModule = null;
+  var renderQueue = Promise.resolve();
+  var svgSeq = 0;
+  var observer = null;
+  var themeWatcher = null;
+  var rendered = new Set;
+  var snapshots = new WeakMap;
+  async function loadMermaid() {
+    if (!mermaidPromise) {
+      const u = MERMAID_URL;
+      mermaidPromise = import(u).then((mod) => {
+        const mermaid = mod.default || mod;
+        mermaid.initialize(mermaidConfig());
+        mermaidModule = mermaid;
+        return mermaid;
+      }).catch((err) => {
+        mermaidPromise = null;
+        throw err;
+      });
+    }
+    return mermaidPromise;
+  }
+  var colorCtx = null;
+  function readHex(name) {
+    const g = getComputedStyle(document.documentElement);
+    const raw = g.getPropertyValue(name).trim();
+    if (!raw)
+      return "";
+    if (!colorCtx)
+      colorCtx = document.createElement("canvas").getContext("2d");
+    if (!colorCtx)
+      return "";
+    colorCtx.fillStyle = "#000000";
+    colorCtx.fillStyle = raw;
+    const value = colorCtx.fillStyle;
+    if (value.charAt(0) === "#")
+      return value;
+    const m = /^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/.exec(value);
+    if (!m)
+      return "";
+    colorCtx.fillStyle = g.getPropertyValue("--bg").trim() || "#000000";
+    const over = colorCtx.fillStyle;
+    if (over.charAt(0) !== "#")
+      return "";
+    const a = parseFloat(m[4]);
+    const chan = (i) => parseInt(m[i], 10) * a + parseInt(over.slice((i - 1) * 2 + 1, (i - 1) * 2 + 3), 16) * (1 - a);
+    const byte = (n) => Math.round(n).toString(16).padStart(2, "0");
+    return "#" + byte(chan(1)) + byte(chan(2)) + byte(chan(3));
+  }
+  var colorOf = (name, fallback) => readHex(name) || fallback;
+  function isDark() {
+    const scheme = getComputedStyle(document.documentElement).getPropertyValue("color-scheme");
+    if (scheme.indexOf("dark") >= 0)
+      return true;
+    if (scheme.indexOf("light") >= 0)
+      return false;
+    const bg = readHex("--bg");
+    if (!/^#[0-9a-f]{6}$/i.test(bg))
+      return true;
+    const r = parseInt(bg.slice(1, 3), 16), g = parseInt(bg.slice(3, 5), 16), b = parseInt(bg.slice(5, 7), 16);
+    return (r * 299 + g * 587 + b * 114) / 1000 < 128;
+  }
+  function mermaidConfig() {
+    const g = getComputedStyle(document.documentElement);
+    const text = (name) => g.getPropertyValue(name).trim();
+    const dark = isDark();
+    const bg = colorOf("--bg", "#0d1117");
+    const bg2 = colorOf("--bg2", "#010409");
+    const bg3 = colorOf("--bg3", "#161b22");
+    const bg4 = colorOf("--bg4", "#21262d");
+    const fg = colorOf("--fg", "#e6edf3");
+    const dim = colorOf("--dim", "#8b949e");
+    const line = colorOf("--line", "#30363d");
+    const accent = colorOf("--accent", "#1f6feb");
+    const accentFg = colorOf("--accent-fg", "#58a6ff");
+    const err = colorOf("--err", "#f85149");
+    const k = colorOf("--k", fg), kt = colorOf("--kt", k), nf = colorOf("--nf", fg);
+    const nc = colorOf("--nc", nf), nb = colorOf("--nb", fg), nv = colorOf("--nv", fg);
+    const s = colorOf("--s", fg), m = colorOf("--m", fg), o = colorOf("--o", fg), c = colorOf("--c", dim);
+    return {
+      startOnLoad: false,
+      securityLevel: "strict",
+      theme: "base",
+      layout: "dagre",
+      suppressErrorRendering: true,
+      darkMode: dark,
+      themeVariables: {
+        darkMode: dark,
+        background: bg,
+        primaryColor: bg3,
+        primaryTextColor: fg,
+        primaryBorderColor: line,
+        secondaryColor: bg2,
+        secondaryTextColor: fg,
+        secondaryBorderColor: line,
+        tertiaryColor: bg4,
+        tertiaryTextColor: fg,
+        tertiaryBorderColor: line,
+        lineColor: dim,
+        textColor: fg,
+        mainBkg: bg3,
+        nodeBorder: line,
+        nodeTextColor: fg,
+        clusterBkg: bg2,
+        clusterBorder: line,
+        titleColor: fg,
+        edgeLabelBackground: bg,
+        labelBackground: bg,
+        actorBkg: bg3,
+        actorBorder: line,
+        actorTextColor: fg,
+        actorLineColor: line,
+        signalColor: fg,
+        signalTextColor: fg,
+        labelBoxBkgColor: bg3,
+        labelBoxBorderColor: line,
+        labelTextColor: fg,
+        loopTextColor: fg,
+        noteBkgColor: bg4,
+        noteBorderColor: line,
+        noteTextColor: fg,
+        activationBkgColor: bg4,
+        activationBorderColor: line,
+        sequenceNumberColor: bg,
+        classText: fg,
+        stateBkg: bg3,
+        labelColor: fg,
+        altBackground: bg2,
+        errorBkgColor: bg3,
+        errorTextColor: err,
+        pie1: k,
+        pie2: nf,
+        pie3: s,
+        pie4: m,
+        pie5: o,
+        pie6: c,
+        pie7: accent,
+        pie8: accentFg,
+        pie9: kt,
+        pie10: nc,
+        pie11: nb,
+        pie12: nv,
+        fontFamily: text("--ui"),
+        fontSize: text("--fs")
+      }
+    };
+  }
+  function enqueue(target) {
+    renderQueue = renderQueue.then(() => renderTarget(target)).catch(() => {});
+  }
+  function observe(pre) {
+    if (!observer) {
+      observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting)
+            continue;
+          observer.unobserve(entry.target);
+          enqueue(entry.target);
+        }
+      }, { rootMargin: "600px 0px" });
+    }
+    observer.observe(pre);
+  }
+  function note(pre, text, isErr) {
+    let el = pre.nextElementSibling;
+    if (!el || !el.classList || !el.classList.contains("md-mermaid-note")) {
+      el = document.createElement("small");
+      el.className = "md-mermaid-note";
+      el.style.cssText = "display:block;padding:2px 0 8px";
+      pre.after(el);
+    }
+    el.style.color = isErr ? "var(--err)" : "var(--faint)";
+    el.textContent = text;
+  }
+  async function parseDetail(mermaid, src) {
+    try {
+      await mermaid.parse(src);
+    } catch (err) {
+      const msg = String(err && err.message || err).split(`
+`).slice(0, 3).join(" ").trim();
+      if (msg)
+        return msg.slice(0, 140);
+    }
+    return "invalid diagram syntax";
+  }
+  function sourceBlock(src) {
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.className = "language-mermaid";
+    code.textContent = src;
+    pre.appendChild(code);
+    return pre;
+  }
+  function fail(target, src, err) {
+    if (target.tagName !== "PRE") {
+      rendered.delete(target);
+      const original = snapshots.get(target) || sourceBlock(src);
+      target.replaceWith(original);
+      target = original;
+    }
+    const raw = err && err.message ? String(err.message) : "";
+    note(target, "Mermaid: " + (raw.split(`
+`)[0] || "render failed").slice(0, 140), true);
+  }
+  async function renderTarget(target) {
+    if (!target.isConnected)
+      return;
+    const isPre = target.tagName === "PRE";
+    const code = isPre ? target.querySelector("code.language-mermaid") : null;
+    const src = isPre ? code ? code.textContent : "" : target.dataset.mermaidSource;
+    if (!src)
+      return;
+    let mermaid;
+    try {
+      mermaid = await loadMermaid();
+    } catch (err) {
+      fail(target, src, err);
+      return;
+    }
+    let svg;
+    try {
+      const parsed = await mermaid.parse(src, { suppressErrors: true });
+      if (!parsed)
+        throw new Error(await parseDetail(mermaid, src));
+      svg = (await mermaid.render("px0-mermaid-" + ++svgSeq, src)).svg;
+      if (!svg)
+        throw new Error("render produced no SVG");
+    } catch (err) {
+      fail(target, src, err);
+      return;
+    }
+    if (!target.isConnected)
+      return;
+    if (isPre) {
+      const node = document.createElement("div");
+      node.className = "md-mermaid";
+      node.dataset.mermaidSource = src;
+      node.innerHTML = svg;
+      snapshots.set(node, target);
+      target.replaceWith(node);
+      rendered.add(node);
+    } else {
+      target.innerHTML = svg;
+    }
+  }
+  function watchTheme() {
+    if (themeWatcher)
+      return;
+    themeWatcher = new MutationObserver(() => {
+      if (!mermaidModule)
+        return;
+      mermaidModule.initialize(mermaidConfig());
+      for (const node of rendered) {
+        if (!node.isConnected) {
+          rendered.delete(node);
+          continue;
+        }
+        enqueue(node);
+      }
+    });
+    themeWatcher.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  }
+  async function renderMermaidBlocks(root) {
+    if (!root || !root.querySelectorAll)
+      return;
+    const codes = root.querySelectorAll("pre > code.language-mermaid");
+    if (!codes.length)
+      return;
+    watchTheme();
+    let seen = 0;
+    for (const code of codes) {
+      seen++;
+      const pre = code.parentElement;
+      if (seen > MAX_BLOCKS) {
+        note(pre, "Diagram not rendered: this preview has more than " + MAX_BLOCKS + " diagrams.");
+      } else if (code.textContent.length > MAX_CHARS) {
+        note(pre, "Diagram not rendered: source is longer than " + MAX_CHARS + " characters.");
+      } else {
+        observe(pre);
+      }
+    }
+  }
+  function forgetMermaid(root) {
+    if (!root)
+      return;
+    if (observer) {
+      for (const code of root.querySelectorAll("pre > code.language-mermaid")) {
+        observer.unobserve(code.parentElement);
+      }
+    }
+    for (const node of rendered) {
+      if (!node.isConnected || root.contains(node))
+        rendered.delete(node);
+    }
+  }
+
+  // web/src/md.js
+  var previewShown = null;
+  var openInApp = null;
+  function setPreviewLinkOpener(fn) {
+    openInApp = fn;
+  }
+  async function loadPreview(d) {
+    let j;
+    try {
+      j = await api("/api/md", { path: d.path });
+    } catch (e) {
+      if (!S2.tabs.includes(d))
+        return;
+      d.mdHtml = null;
+      d.mode = "source";
+      if (doc_() === d) {
+        syncPreview();
+        layout();
+        render();
+        updateStatus();
+      }
+      showToast("!", d.name + ": " + (e.message || "could not render Markdown"));
+      return;
+    }
+    if (!S2.tabs.includes(d))
+      return;
+    d.mdHtml = typeof j.html === "string" ? j.html : "";
+    if (doc_() === d && d.mode === "preview")
+      syncPreview();
+  }
+  function previewBody(d) {
+    if (d.mdEl)
+      return d.mdEl;
+    const el = document.createElement("div");
+    el.className = "md-body";
+    el.innerHTML = d.mdHtml || "";
+    el.addEventListener("click", onPreviewClick);
+    d.mdEl = el;
+    renderMermaidBlocks(el).catch(() => {});
+    return el;
+  }
+  function resolveLink(d, href) {
+    if (!d || !href || href.charAt(0) === "#")
+      return "";
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.slice(0, 2) === "//")
+      return "";
+    const clean = href.split("#")[0].split("?")[0];
+    if (!clean)
+      return "";
+    const dir = d.path.includes("/") ? d.path.slice(0, d.path.lastIndexOf("/")) : "";
+    const out = dir ? dir.split("/") : [];
+    for (const raw of clean.split("/")) {
+      if (!raw || raw === ".")
+        continue;
+      if (raw === "..") {
+        if (!out.length)
+          return "";
+        out.pop();
+        continue;
+      }
+      let seg = raw;
+      try {
+        seg = decodeURIComponent(raw);
+      } catch {}
+      out.push(seg);
+    }
+    return out.join("/");
+  }
+  function onPreviewClick(e) {
+    const a = e.target instanceof Element ? e.target.closest("a") : null;
+    if (!a)
+      return;
+    const path = resolveLink(doc_(), a.getAttribute("href") || "");
+    if (!path || !openInApp)
+      return;
+    e.preventDefault();
+    openInApp(path);
+  }
+  function showPreview(d) {
+    const box = $("#mdview");
+    if (!box || d.mdHtml == null)
+      return;
+    if (previewShown !== d) {
+      if (previewShown)
+        previewShown.mdScroll = box.scrollTop;
+      box.replaceChildren(previewBody(d));
+      previewShown = d;
+      box.scrollTop = d.mdScroll || 0;
+    }
+    box.hidden = false;
+  }
+  function hidePreview() {
+    const box = $("#mdview");
+    if (!box || box.hidden)
+      return;
+    if (previewShown)
+      previewShown.mdScroll = box.scrollTop;
+    box.hidden = true;
+  }
+  function syncPreview() {
+    const d = doc_();
+    const preview = !!d && d.mode === "preview";
+    document.body.classList.toggle("md-preview", preview);
+    if (preview && d.mdHtml != null) {
+      showPreview(d);
+      const caret = $("#caret");
+      if (caret)
+        caret.hidden = true;
+    } else {
+      hidePreview();
+    }
+    updateEditorOptionControls();
+    fitStatus();
+  }
+  function forgetPreview(d) {
+    if (previewShown === d) {
+      $("#mdview")?.replaceChildren();
+      previewShown = null;
+    }
+    forgetMermaid(d.mdEl);
+    d.mdEl = null;
+    d.mdHtml = null;
+  }
+
   // web/src/tabs.js
+  setPreviewLinkOpener(openFile);
   var closedTabs = [];
   var MAX_CLOSED = 20;
   async function openFile(path, opts = {}) {
-    const { line, push = true, col } = opts;
+    const { line, push = true, col, source } = opts;
     let idx = S2.tabs.findIndex((t) => t.path === path);
     if (idx < 0) {
       let j;
-      const start2 = line ? Math.max(0, Math.floor((line - 1) / CHUNK) * CHUNK) : 0;
+      const start = line ? Math.max(0, Math.floor((line - 1) / CHUNK) * CHUNK) : 0;
       try {
-        j = await api("/api/file", { path, start: start2, count: CHUNK });
+        j = await api("/api/file", { path, start, count: CHUNK });
       } catch (e) {
         setStatusNote(path + ": " + e.message);
         return;
@@ -2207,7 +2654,8 @@
         showImage(path);
         return;
       }
-      const d2 = {
+      const renderPreview = isMarkdown(path) && S2.mdPreview && !source;
+      const d = {
         path,
         name: path.split("/").pop(),
         lang: j.lang,
@@ -2215,21 +2663,27 @@
         maxCols: j.maxCols,
         size: j.size,
         lines: new Array(j.total),
-        chunks: new Set([start2 / CHUNK]),
+        chunks: new Set([start / CHUNK]),
         pending: new Set,
         refining: new Set,
         scrollTop: 0,
         cur: line || 1,
         outline: null,
-        gen: 0
+        gen: 0,
+        mode: renderPreview ? "preview" : "source",
+        mdHtml: null,
+        mdEl: null,
+        mdScroll: 0
       };
       for (let i = 0;i < j.lines.length; i++)
-        d2.lines[j.start + i] = j.lines[i];
-      d2.lsp = j.lsp || { state: "off", server: "" };
-      S2.tabs.push(d2);
+        d.lines[j.start + i] = j.lines[i];
+      d.lsp = j.lsp || { state: "off", server: "" };
+      S2.tabs.push(d);
       idx = S2.tabs.length - 1;
       if (j.refine)
-        refineChunk(d2, start2 / CHUNK);
+        refineChunk(d, start / CHUNK);
+      if (d.mode === "preview")
+        loadPreview(d);
     }
     const prev = doc_();
     if (prev && prev !== S2.tabs[idx])
@@ -2238,6 +2692,8 @@
       clearSelectAll();
     S2.active = idx;
     const d = S2.tabs[idx];
+    if (source && d.mode === "preview")
+      setTabMode(d, "source", false);
     $("#empty").hidden = true;
     hideImage();
     if (!S2.at || S2.at.path !== d.path)
@@ -2248,6 +2704,7 @@
     warmLSP(d);
     drawTabs();
     drawCrumbs();
+    syncPreview();
     layout();
     if (line) {
       d.cur = line;
@@ -2265,10 +2722,59 @@
     const y = (n - 1) * LH - Math.max(0, vp.clientHeight / 2 - LH * 2);
     vp.scrollTop = Math.max(0, y);
   }
+  function togglePreview() {
+    const d = doc_();
+    if (!d)
+      return;
+    if (!isMarkdown(d.path)) {
+      showToast("Preview", "Markdown preview only applies to .md files");
+      return;
+    }
+    const next = d.mode === "preview" ? "source" : "preview";
+    setTabMode(d, next, true);
+    if (next === "preview") {
+      clearLink();
+      clearFind();
+      clearSelectAll();
+    }
+    syncPreview();
+    layout();
+    render();
+    updateStatus();
+    if (next === "preview" && d.mdHtml == null)
+      loadPreview(d);
+  }
+  function setTabMode(d, mode, persist = false) {
+    if (!d || d.mode === mode)
+      return;
+    d.mode = mode;
+    if (!persist)
+      return;
+    S2.mdPreview = mode === "preview";
+    try {
+      localStorage.setItem("px0.mdPreview", S2.mdPreview ? "true" : "false");
+    } catch {}
+  }
+  function gotoLine(line) {
+    const d = doc_();
+    if (!d)
+      return;
+    if (d.mode === "preview") {
+      setTabMode(d, "source", false);
+      syncPreview();
+      layout();
+    }
+    d.cur = Math.max(1, Math.min(line, d.total));
+    centerLine(d.cur);
+    render();
+    updateStatus();
+    pushHistory(d.path, d.cur);
+  }
   function closeTab(i) {
     clearSelectAll();
     const [closed] = S2.tabs.splice(i, 1);
     if (closed) {
+      forgetPreview(closed);
       if (closed.path) {
         const scrollTop = i === S2.active ? vp.scrollTop : closed.scrollTop;
         closedTabs.push({ path: closed.path, cur: closed.cur, scrollTop });
@@ -2289,6 +2795,7 @@
       $("#empty").hidden = false;
       drawCrumbs();
       drawTabs();
+      syncPreview();
       updateStatus();
       return;
     }
@@ -2296,6 +2803,7 @@
     const d = doc_();
     drawTabs();
     drawCrumbs();
+    syncPreview();
     layout();
     vp.scrollTop = d.scrollTop;
     render();
@@ -2338,6 +2846,7 @@
     warmLSP(S2.tabs[i]);
     drawTabs();
     drawCrumbs();
+    syncPreview();
     layout();
     vp.scrollTop = S2.tabs[i].scrollTop;
     render();
@@ -2481,6 +2990,7 @@
     [["Mod+G"], "Go to line"],
     [["Alt+Z"], "Toggle word wrap"],
     [["Alt+L"], "Toggle line numbers"],
+    [["Alt+M"], "Toggle Markdown preview"],
     [["Enter", "Shift+Enter"], "Next / previous match"],
     [["F12", "Mod+Click"], "Go to definition"],
     [["Shift+F12"], "Find all references"],
@@ -2535,6 +3045,8 @@
         toggleWordWrap();
       else if (act === "line-numbers")
         toggleLineNumbers();
+      else if (act === "preview")
+        togglePreview();
       else if (act === "palette")
         openPalette("command");
       else if (act === "help")
@@ -2542,6 +3054,7 @@
     });
     addEventListener("keydown", (e) => {
       const mod = e[MOD];
+      const preview = doc_()?.mode === "preview";
       if (e.key === "Escape") {
         if (!overlay.hidden) {
           closePalette();
@@ -2673,9 +3186,16 @@
         switchTab(+e.code.slice(5) - 1);
         return;
       }
-      if (e.altKey && !mod && !e.shiftKey && SEL_KEYS[e.code] && runSelectionAction(SEL_KEYS[e.code])) {
-        e.preventDefault();
-        return;
+      if (e.altKey && !mod && !e.shiftKey && SEL_KEYS[e.code]) {
+        if (preview) {
+          e.preventDefault();
+          showToast("Preview", withKeys("Switch to Source for selection actions ({Alt+M})"));
+          return;
+        }
+        if (runSelectionAction(SEL_KEYS[e.code])) {
+          e.preventDefault();
+          return;
+        }
       }
       if (e.altKey && e.code === "KeyZ") {
         e.preventDefault();
@@ -2687,15 +3207,20 @@
         toggleLineNumbers();
         return;
       }
+      if (e.altKey && !mod && !e.shiftKey && e.code === "KeyM") {
+        e.preventDefault();
+        togglePreview();
+        return;
+      }
       if (inField(document.activeElement))
         return;
       const plainMod = mod && !e.shiftKey && !e.altKey;
-      if (plainMod && (e.key === "a" || e.key === "A")) {
+      if (plainMod && (e.key === "a" || e.key === "A") && !preview) {
         e.preventDefault();
         selectAll();
         return;
       }
-      if (plainMod && (e.key === "c" || e.key === "C") && copySelectAll()) {
+      if (plainMod && (e.key === "c" || e.key === "C") && !preview && copySelectAll()) {
         e.preventDefault();
         return;
       }
@@ -2704,6 +3229,8 @@
         showHelp();
         return;
       }
+      if (preview && (e.key.startsWith("Arrow") || e.key === "PageDown" || e.key === "PageUp" || e.key === "Home" || e.key === "End"))
+        return;
       const d = doc_();
       if (!d)
         return;
@@ -2813,6 +3340,7 @@
     } },
     { name: withKeys("Toggle Word Wrap ({Alt+Z})"), run: () => toggleWordWrap() },
     { name: withKeys("Toggle Line Numbers ({Alt+L})"), run: () => toggleLineNumbers() },
+    { name: withKeys("Markdown: Toggle Preview ({Alt+M})"), run: () => togglePreview() },
     { name: withKeys("Toggle Sidebar ({Mod+B})"), run: () => document.body.classList.toggle("side-hidden") },
     { name: "Select Theme…", run: () => openPalette("theme") },
     { name: "Next Theme", run: cycleTheme },
@@ -2960,16 +3488,9 @@
     closePalette();
     if (it.kind === "file")
       openFile(it.path);
-    else if (it.kind === "sym" || it.kind === "line") {
-      const d = doc_();
-      if (!d)
-        return;
-      d.cur = it.n;
-      centerLine(it.n);
-      render();
-      updateStatus();
-      pushHistory(d.path, it.n);
-    } else if (it.kind === "cmd")
+    else if (it.kind === "sym" || it.kind === "line")
+      gotoLine(it.n);
+    else if (it.kind === "cmd")
       it.cmd.run();
     else if (it.kind === "theme")
       setTheme(it.id);
@@ -3033,6 +3554,8 @@
       const linesPref = localStorage.getItem("px0.lineNumbers");
       S2.lineNumbers = linesPref !== null ? linesPref === "true" : true;
       document.body.classList.toggle("hide-lines", !S2.lineNumbers);
+      const mdPref = localStorage.getItem("px0.mdPreview");
+      S2.mdPreview = mdPref !== null ? mdPref === "true" : true;
       updateEditorOptionControls();
     } catch {}
     applyKeyLabels();

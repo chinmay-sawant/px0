@@ -369,8 +369,84 @@ body.hide-lines .c { padding-left: 16px; }
 .c .gh{color:var(--accent-fg);font-weight:600} .c .ge{font-style:italic} .c .gs{font-weight:600}
 .c .err{color:var(--err);text-decoration:underline wavy}
 
-#imgview { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; padding: 32px; }
+/* Above #mdview (z-index 3): opening an image while a preview tab is active
+   must still show the image, as it always has. */
+#imgview { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; overflow: auto; padding: 32px; }
 #imgview img { max-width: 100%; image-rendering: pixelated; box-shadow: var(--shadow); background: repeating-conic-gradient(var(--bg3) 0 25%, transparent 0 50%) 0 0/16px 16px; }
+
+/* ---------- rendered Markdown preview (#mdview) ---------- */
+/* A per-tab mode: the source view stays mounted underneath, so toggling back
+   restores its scroll. Fence highlighting reuses the same token classes as
+   source rows; the rules below scope them to .md-body so the two never touch. */
+#mdview { position: absolute; inset: 0; z-index: 3; overflow: auto; background: var(--bg); outline: none; }
+body.md-preview #minimap-hits { display: none; }
+/* The source rows stay mounted underneath the preview; hide them from paint and
+   from select-all so Ctrl+A copies the rendered document, not its raw source. */
+body.md-preview #viewport { visibility: hidden; }
+.md-body {
+  max-width: 860px; margin: 0 auto; padding: 30px 42px 90px;
+  font: 14px/1.68 var(--ui); color: var(--fg); overflow-wrap: break-word;
+}
+.md-body > :first-child { margin-top: 0; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6 {
+  margin: 1.7em 0 .7em; font-weight: 600; line-height: 1.3;
+}
+.md-body h1 { font-size: 1.9em; padding-bottom: .3em; border-bottom: 1px solid var(--line); }
+.md-body h2 { font-size: 1.5em; padding-bottom: .3em; border-bottom: 1px solid var(--line); }
+.md-body h3 { font-size: 1.25em; }
+.md-body h4 { font-size: 1.1em; }
+.md-body h5 { font-size: 1em; }
+.md-body h6 { font-size: .92em; color: var(--dim); }
+.md-body p { margin: .8em 0; }
+.md-body a { color: var(--accent); text-decoration: none; }
+.md-body a:hover { text-decoration: underline; }
+.md-body strong { font-weight: 600; }
+.md-body hr { border: 0; border-top: 1px solid var(--line); margin: 2em 0; }
+.md-body ul, .md-body ol { margin: .8em 0; padding-left: 1.7em; }
+.md-body li + li { margin-top: .25em; }
+.md-body li > ul, .md-body li > ol { margin: .25em 0; }
+.md-body blockquote { margin: .9em 0; padding: 0 1em; color: var(--dim); border-left: 3px solid var(--line); }
+.md-body blockquote > :first-child { margin-top: 0; }
+.md-body blockquote > :last-child { margin-bottom: 0; }
+.md-body code { font: .9em var(--mono); background: var(--bg3); border-radius: 4px; padding: .13em .4em; }
+.md-body pre {
+  margin: 1em 0; padding: 12px 14px; overflow: auto;
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 6px;
+}
+.md-body pre code { display: block; padding: 0; background: none; font-size: 12.5px; line-height: 1.55; }
+.md-body img { max-width: 100%; height: auto; border-radius: 4px; }
+/* Tables scroll sideways instead of stretching the column. */
+.md-body table {
+  display: block; width: fit-content; max-width: 100%; overflow-x: auto;
+  border-collapse: collapse; margin: 1em 0; font-size: 13px;
+}
+.md-body th, .md-body td { border: 1px solid var(--line); padding: 6px 12px; text-align: left; }
+.md-body th { background: var(--bg2); font-weight: 600; }
+.md-body tbody tr:nth-child(2n) { background: var(--bg2); }
+/* GFM task lists: the server renders disabled checkboxes. */
+.md-body .task-list-item { list-style: none; }
+.md-body .task-list-item input, .md-body input[type="checkbox"] {
+  margin: 0 .5em 0 -1.35em; vertical-align: middle; accent-color: var(--accent);
+}
+.md-body sup { font-size: .75em; }
+.md-body .footnotes {
+  margin-top: 3.5em; padding-top: 1em; border-top: 1px solid var(--line);
+  font-size: 12.5px; color: var(--dim);
+}
+/* Wrappers minted by web/src/mermaid.js once a diagram renders. */
+.md-body .md-mermaid { margin: 1em 0; text-align: center; }
+.md-body .md-mermaid svg { max-width: 100%; height: auto; }
+/* Fenced-code tokens: the server emits the same <i class> vocabulary as source
+   rows (see STYLING.md), so the colours are repeated under .md-body. */
+.md-body i { font-style: normal; }
+.md-body .k{color:var(--k)} .md-body .kt{color:var(--kt)} .md-body .nf{color:var(--nf)} .md-body .nc{color:var(--nc)}
+.md-body .nb{color:var(--nb)} .md-body .nv{color:var(--nv)} .md-body .no{color:var(--no)} .md-body .na{color:var(--na)}
+.md-body .nt{color:var(--nt)} .md-body .nd{color:var(--nd)} .md-body .np{color:var(--np)} .md-body .s{color:var(--s)}
+.md-body .m{color:var(--m)} .md-body .o{color:var(--o)} .md-body .p{color:var(--p)}
+.md-body .c{color:var(--c);font-style:italic} .md-body .cp{color:var(--cp)}
+.md-body .gi{color:var(--gi);background:var(--gi-bg)} .md-body .gd{color:var(--gd);background:var(--gd-bg)}
+.md-body .gh{color:var(--accent-fg);font-weight:600} .md-body .ge{font-style:italic} .md-body .gs{font-weight:600}
+.md-body .err{color:var(--err);text-decoration:underline wavy}
 
 #empty { position: absolute; inset: 0; display: grid; place-items: center; background: var(--bg); }
 .empty-inner { text-align: center; color: var(--faint); }
@@ -414,7 +490,7 @@ kbd {
 #status.fit-1 .footer-kbd,
 #status.fit-2 #st-index, #status.fit-2 #st-size,
 #status.fit-3 .metric-label,
-#status.fit-4 [data-action="wrap"], #status.fit-4 [data-action="line-numbers"], #status.fit-4 [data-action="help"], #status.fit-4 .sel-chip, #status.fit-4 #sel-stats,
+#status.fit-4 [data-action="wrap"], #status.fit-4 [data-action="line-numbers"], #status.fit-4 [data-action="preview"], #status.fit-4 [data-action="help"], #status.fit-4 .sel-chip, #status.fit-4 #sel-stats,
 #status.fit-5 #st-metrics,
 #status.fit-6 #st-lsp { display: none; }
 #footer-actions { display: flex; align-items: center; gap: 3px; }

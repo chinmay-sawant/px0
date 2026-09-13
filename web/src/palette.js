@@ -1,9 +1,7 @@
 // web/src/palette.js
 import { $, esc, S, doc_, api, debounce, withKeys } from './state.js';
-import { render, toggleWordWrap, toggleLineNumbers } from './renderer.js';
-import { openFile, centerLine, closeTab, reopenClosedTab } from './tabs.js';
-import { updateStatus } from './status.js';
-import { pushHistory } from './history.js';
+import { toggleWordWrap, toggleLineNumbers } from './renderer.js';
+import { openFile, gotoLine, closeTab, reopenClosedTab, togglePreview } from './tabs.js';
 import { showPanel } from './panels.js';
 import { openFind } from './find.js';
 import { gotoDefinition, findReferences } from './lsp.js';
@@ -36,6 +34,7 @@ export const COMMANDS = [
   { name: 'Reveal Active File in Explorer', run: () => { const d = doc_(); if (d) { showPanel('files'); revealFile(d.path); } } },
   { name: withKeys('Toggle Word Wrap ({Alt+Z})'), run: () => toggleWordWrap() },
   { name: withKeys('Toggle Line Numbers ({Alt+L})'), run: () => toggleLineNumbers() },
+  { name: withKeys('Markdown: Toggle Preview ({Alt+M})'), run: () => togglePreview() },
   { name: withKeys('Toggle Sidebar ({Mod+B})'), run: () => document.body.classList.toggle('side-hidden') },
   { name: 'Select Theme…', run: () => openPalette('theme') },
   { name: 'Next Theme', run: cycleTheme },
@@ -156,10 +155,8 @@ export function acceptPalette() {
   if (it.kind === 'theme') pal.restoreTheme = null;
   closePalette();
   if (it.kind === 'file') openFile(it.path);
-  else if (it.kind === 'sym' || it.kind === 'line') {
-    const d = doc_(); if (!d) return;
-    d.cur = it.n; centerLine(it.n); render(); updateStatus(); pushHistory(d.path, it.n);
-  } else if (it.kind === 'cmd') it.cmd.run();
+  else if (it.kind === 'sym' || it.kind === 'line') gotoLine(it.n);
+  else if (it.kind === 'cmd') it.cmd.run();
   else if (it.kind === 'theme') setTheme(it.id);
 }
 
