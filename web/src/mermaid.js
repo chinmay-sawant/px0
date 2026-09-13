@@ -1,9 +1,13 @@
 // web/src/mermaid.js
-// Lazy Mermaid rendering for Markdown previews. The vendored ESM build in
-// web/lib/mermaid/ (see scripts/vendor-mermaid.sh) is imported only after a
-// rendered document is found to contain a diagram fence, so a preview without
-// diagrams never fetches or parses it. Theme variables are read from the
-// tokens documented in STYLING.md at initialize time.
+// Mermaid rendering for Markdown previews. Diagrams draw as soon as a preview
+// is shown, in the order they appear, through one queue; the vendored ESM build
+// in web/lib/mermaid/ (see scripts/vendor-mermaid.sh) is imported on the first
+// diagram, so a preview without fences never fetches or parses it. Theme
+// variables are read from the tokens documented in STYLING.md at initialize
+// time. The card a finished diagram is mounted in lives in
+// web/src/mermaid-view.js.
+
+import { mountDiagram } from './mermaid-view.js';
 
 /* Keep in lockstep with scripts/vendor-mermaid.sh. The version directory keeps
    the immutable /static/lib/ caching safe across Mermaid upgrades. */
@@ -14,6 +18,26 @@ const MERMAID_URL = '/static/lib/mermaid/' + MERMAID_VERSION + '/mermaid.esm.min
 const MAX_BLOCKS = 50;
 const MAX_CHARS = 2000;
 
+/* Wrapping width for node and edge labels, and the CSS that enforces it.
+   Mermaid only turns wrapping on when a label measures exactly wrappingWidth
+   and leaves `white-space: nowrap` otherwise; browsers that ignore max-width
+   on table-cell (Firefox) then clip the tail of long labels. themeCSS is
+   embedded in the SVG and applied during measurement too, so the node is
+   sized for wrapped text and a label can never be cut off. */
+const MM_LABEL_W = 200;
+const MM_THEME_CSS = 'foreignObject > div {' +
+  ' display: table !important;' +
+  ' white-space: break-spaces !important;' +
+  ' max-width: ' + MM_LABEL_W + 'px !important;' +
+  ' overflow-wrap: anywhere; }' +
+  // Subgraph titles are sized to their content by Mermaid (no wrapping width);
+  // keep that so a title stays on one line inside its cluster.
+  ' g.cluster foreignObject > div {' +
+  ' display: table-cell !important;' +
+  ' white-space: nowrap !important;' +
+  ' max-width: none !important;' +
+  ' width: auto !important; }';
+
 /* The server marks a diagram fence with data-lang, and the preview sanitizer
    keeps that attribute; the code element itself carries no class by then. */
 const MD_MERMAID = 'pre[data-lang="mermaid"] > code';
@@ -22,7 +46,6 @@ let mermaidPromise = null;           // in-flight/finished import: mermaid loads
 let mermaidModule = null;            // resolved module, for theme re-initialize
 let renderQueue = Promise.resolve(); // diagrams render one at a time
 let svgSeq = 0;                      // unique id per mermaid.render() call
-let observer = null;                 // shared IntersectionObserver
 let themeWatcher = null;             // shared html[data-theme] observer
 const rendered = new Set();          // wrapper nodes that currently hold an SVG
 const snapshots = new WeakMap();     // wrapper -> its original <pre>, for restore
@@ -112,6 +135,9 @@ function mermaidConfig() {
     theme: 'base',
     layout: 'dagre',
     suppressErrorRendering: true,
+    themeCSS: MM_THEME_CSS,
+    flowchart: { htmlLabels: true, wrappingWidth: MM_LABEL_W, subGraphTitleMargin: { top: 8, bottom: 16 } },
+    sequence: { wrap: true },
     darkMode: dark,
     themeVariables: {
       darkMode: dark,
@@ -151,18 +177,9 @@ function enqueue(target) {
   renderQueue = renderQueue.then(() => renderTarget(target)).catch(() => {});
 }
 
-function observe(pre) {
-  if (!observer) {
-    observer = new IntersectionObserver(entries => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        observer.unobserve(entry.target);
-        enqueue(entry.target);
-      }
-    }, { rootMargin: '600px 0px' });
-  }
-  observer.observe(pre);
-}
+/* Diagrams are drawn as soon as the preview is shown: a reader who opens a
+   Markdown file expects the diagrams in it to be there, not to appear as the
+   page is scrolled. The queue keeps the parse/render pairs serial. */
 
 /* Small note under a block. The preview stylesheet does not know this class
    yet, so the note carries token-based styling of its own. */
@@ -208,7 +225,9 @@ function fail(target, src, err) {
   rendered.delete(target);
   const original = snapshots.get(target) || sourceBlock(src);
   target.replaceWith(original);
-  note(original, 'Mermaid: ' + (err && err.message ? String(err.message).split('\n')[0] : 'render failed').slice(0, 140), true);
+  // Point at the fence's own source line: Mermaid counts within the diagram.
+  const at = original.dataset.line ? ' (line ' + original.dataset.line + ')' : '';
+  note(original, 'Mermaid' + at + ': ' + (err && err.message ? String(err.message).split('\n')[0] : 'render failed').slice(0, 140), true);
 }
 
 async function renderTarget(target) {
@@ -230,110 +249,6 @@ async function renderTarget(target) {
   if (!target.isConnected) return; // the preview was replaced while rendering
   mountDiagram(target, svg);
   rendered.add(target);
-}
-
-/* ---------- diagram card ---------- */
-
-const MM_MIN = 0.25;  // never shrink past a quarter of natural size
-const MM_MAX = 4;     // or grow past 400%
-const MM_STEP = 1.25;
-
-/* Mount a rendered diagram as a card: a header with zoom controls over a
-   scrollable, draggable stage. The zoom factor lives on the wrapper's dataset,
-   so a theme re-render rebuilds the card without losing the reader's setting.
-   Dataset zoom 0 (or absent) means "fit to width on mount". */
-export function mountDiagram(target, svgText) {
-  const view = document.createElement('div');
-  view.className = 'mm-view';
-  const stage = document.createElement('div');
-  stage.className = 'mm-stage';
-  stage.innerHTML = svgText;
-  view.append(stage);
-
-  const svg = stage.querySelector('svg');
-  const box = svg && svg.viewBox ? svg.viewBox.baseVal : null;
-  const w = box && box.width ? box.width : 0;
-  const h = box && box.height ? box.height : 0;
-  if (svg && w && h) {
-    // Mermaid sizes the svg with a style attribute; the card owns its scale.
-    svg.removeAttribute('style');
-    svg.style.maxWidth = 'none';
-  }
-
-  const bar = document.createElement('div');
-  bar.className = 'mm-bar';
-  const label = document.createElement('span');
-  label.className = 'mm-label';
-  label.textContent = 'mermaid';
-
-  const zoom = document.createElement('div');
-  zoom.className = 'mm-zoom';
-  const pct = document.createElement('button');
-  pct.type = 'button';
-  pct.className = 'mm-pct';
-  pct.title = 'Reset zoom to fit';
-  pct.setAttribute('aria-label', 'Reset zoom to fit');
-  const mkBtn = (text, title, on) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'mm-btn';
-    b.textContent = text;
-    b.title = title;
-    b.setAttribute('aria-label', title);
-    b.addEventListener('click', on);
-    return b;
-  };
-
-  const fit = () => (w && view.clientWidth ? Math.min(1, (view.clientWidth - 28) / w) : 1);
-  let z = 1;
-  const apply = next => {
-    z = Math.min(MM_MAX, Math.max(MM_MIN, next));
-    target.dataset.zoom = String(z);
-    if (svg && w && h) {
-      svg.setAttribute('width', String(Math.round(w * z)));
-      svg.setAttribute('height', String(Math.round(h * z)));
-    }
-    pct.textContent = Math.round(z * 100) + '%';
-  };
-
-  zoom.append(
-    mkBtn('\u2212', 'Zoom out', () => apply(z / MM_STEP)),
-    pct,
-    mkBtn('+', 'Zoom in', () => apply(z * MM_STEP)),
-  );
-  pct.addEventListener('click', () => apply(fit()));
-  bar.append(label, zoom);
-
-  const card = document.createElement('div');
-  card.className = 'mm-card';
-  card.append(bar, view);
-  target.replaceChildren(card);
-
-  // A previous mount's zoom survives; a fresh diagram starts fitted.
-  apply(Number(target.dataset.zoom) || fit());
-
-  view.addEventListener('wheel', e => {
-    if (!e.ctrlKey && !e.metaKey) return; // plain wheel keeps scrolling the page
-    e.preventDefault();
-    apply(z * (e.deltaY < 0 ? MM_STEP : 1 / MM_STEP));
-  }, { passive: false });
-
-  let pan = null;
-  view.addEventListener('pointerdown', e => {
-    if (e.button !== 0) return;
-    if (e.target !== view) e.preventDefault(); // keep a diagram drag from selecting text
-    pan = { x: e.clientX, y: e.clientY, l: view.scrollLeft, t: view.scrollTop };
-    view.classList.add('dragging');
-    if (view.setPointerCapture) view.setPointerCapture(e.pointerId);
-  });
-  view.addEventListener('pointermove', e => {
-    if (!pan) return;
-    view.scrollLeft = pan.l - (e.clientX - pan.x);
-    view.scrollTop = pan.t - (e.clientY - pan.y);
-  });
-  const endPan = () => { pan = null; view.classList.remove('dragging'); };
-  view.addEventListener('pointerup', endPan);
-  view.addEventListener('pointercancel', endPan);
 }
 
 function watchTheme() {
@@ -366,7 +281,7 @@ export async function renderMermaidBlocks(root) {
       note(pre, 'Diagram not rendered: source is longer than ' + MAX_CHARS + ' characters.');
       continue;
     }
-    // Swap in the wrapper before observing, so the code-block enhancer never
+    // Swap in the wrapper before queueing, so the code-block enhancer never
     // sees a diagram as a code block and the source stays for a failed render.
     const node = document.createElement('div');
     node.className = 'md-mermaid';
@@ -374,19 +289,14 @@ export async function renderMermaidBlocks(root) {
     if (pre.dataset.line) node.dataset.line = pre.dataset.line; // keep line navigation
     snapshots.set(node, pre);
     pre.replaceWith(node);
-    observe(node);
+    enqueue(node);
   }
 }
 
-/* Drop bookkeeping for one preview's blocks when its tab closes: fences that
-   never intersected must not stay observed (they retain the detached body),
-   and rendered wrappers leave the theme re-render set with the body. */
+/* Drop bookkeeping for one preview's blocks when its tab closes: rendered
+   wrappers leave the theme re-render set with the body. */
 export function forgetMermaid(root) {
   if (!root) return;
-  if (observer) {
-    for (const node of root.querySelectorAll('.md-mermaid')) observer.unobserve(node);
-    for (const code of root.querySelectorAll(MD_MERMAID)) observer.unobserve(code.parentElement);
-  }
   for (const node of rendered) {
     if (!node.isConnected || root.contains(node)) rendered.delete(node);
   }

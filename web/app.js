@@ -1957,17 +1957,229 @@
     });
   }
 
+  // web/src/mermaid-view.js
+  var MM_MIN = 0.25;
+  var MM_MAX = 4;
+  var MM_STEP = 1.25;
+  var MM_PAD = 28;
+  var MM_INLINE_H = 0.8;
+  var MM_INLINE_CAP = 720;
+  var MM_KEEP = 72;
+  function svgSize(svg) {
+    const box = svg && svg.viewBox ? svg.viewBox.baseVal : null;
+    return { w: box && box.width ? box.width : 0, h: box && box.height ? box.height : 0 };
+  }
+  function buildStage(svgText) {
+    const view = document.createElement("div");
+    view.className = "mm-view";
+    const stage = document.createElement("div");
+    stage.className = "mm-stage";
+    stage.innerHTML = svgText;
+    view.append(stage);
+    const svg = stage.querySelector("svg");
+    if (svg) {
+      svg.removeAttribute("style");
+      svg.style.maxWidth = "none";
+    }
+    const { w, h } = svgSize(svg);
+    return { view, stage, svg, w, h };
+  }
+  function fitScale(view, w, h, maxH) {
+    const cw = view.clientWidth || 0;
+    if (!w || !cw)
+      return 1;
+    const byW = (cw - MM_PAD) / w;
+    const byH = maxH && h ? (maxH - MM_PAD) / h : Infinity;
+    return Math.min(1, byW, byH);
+  }
+  function inlineMaxH() {
+    const vh = window.innerHeight || 800;
+    return Math.min(MM_INLINE_CAP, Math.round(vh * MM_INLINE_H));
+  }
+  function sizeSvg(svg, w, h, z) {
+    if (svg && w && h) {
+      svg.setAttribute("width", String(Math.round(w * z)));
+      svg.setAttribute("height", String(Math.round(h * z)));
+    }
+  }
+  function wireStage(view, { zoom, pan }) {
+    view.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const r = view.getBoundingClientRect();
+      zoom(e.deltaY < 0 ? MM_STEP : 1 / MM_STEP, e.clientX - r.left, e.clientY - r.top);
+    }, { passive: false });
+    view.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0)
+        return;
+      e.preventDefault();
+      let { clientX: px, clientY: py } = e;
+      view.classList.add("dragging");
+      const move = (ev) => {
+        pan(ev.clientX - px, ev.clientY - py);
+        px = ev.clientX;
+        py = ev.clientY;
+      };
+      const end = () => {
+        view.classList.remove("dragging");
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", end);
+        window.removeEventListener("pointercancel", end);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+    });
+  }
+  var fitted = new WeakMap;
+  function mountDiagram(target, svgText) {
+    const { view, svg, w, h } = buildStage(svgText);
+    const bar = document.createElement("div");
+    bar.className = "mm-bar";
+    const label = document.createElement("span");
+    label.className = "mm-label";
+    label.textContent = "mermaid";
+    const zoomBtn = document.createElement("button");
+    zoomBtn.type = "button";
+    zoomBtn.className = "mm-btn";
+    zoomBtn.title = "Zoom diagram";
+    zoomBtn.setAttribute("aria-label", "Zoom diagram");
+    zoomBtn.textContent = "⤢";
+    bar.append(label, zoomBtn);
+    const card = document.createElement("div");
+    card.className = "mm-card";
+    card.append(bar, view);
+    target.replaceChildren(card);
+    const refit = () => {
+      const cap = inlineMaxH();
+      const z = fitScale(view, w, h, cap);
+      sizeSvg(svg, w, h, z);
+      view.style.height = Math.min(Math.max(140, Math.round(h * z + MM_PAD)), cap + MM_PAD) + "px";
+    };
+    refit();
+    fitted.get(target)?.disconnect();
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(refit);
+      ro.observe(view);
+      fitted.set(target, ro);
+    }
+    view.title = "Click to zoom";
+    view.addEventListener("click", () => openZoomCard(svgText));
+    zoomBtn.addEventListener("click", () => openZoomCard(svgText));
+  }
+  function openZoomCard(svgText) {
+    const { view, stage, svg, w, h } = buildStage(svgText);
+    const backdrop = document.createElement("div");
+    backdrop.className = "mm-backdrop";
+    const card = document.createElement("div");
+    card.className = "mm-zoom-card";
+    card.tabIndex = -1;
+    const bar = document.createElement("div");
+    bar.className = "mm-bar";
+    const label = document.createElement("span");
+    label.className = "mm-label";
+    label.textContent = "mermaid";
+    const controls = document.createElement("div");
+    controls.className = "mm-zoom";
+    const pct = document.createElement("button");
+    pct.type = "button";
+    pct.className = "mm-pct";
+    pct.title = "Reset zoom to fit";
+    pct.setAttribute("aria-label", "Reset zoom to fit");
+    const mkBtn = (text, cls, title, on) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mm-btn" + (cls ? " " + cls : "");
+      b.textContent = text;
+      b.title = title;
+      b.setAttribute("aria-label", title);
+      b.addEventListener("click", on);
+      return b;
+    };
+    let z = 1, tx = 0, ty = 0;
+    const draw = () => {
+      sizeSvg(svg, w, h, z);
+      stage.style.transform = "translate(" + Math.round(tx) + "px," + Math.round(ty) + "px)";
+      pct.textContent = Math.round(z * 100) + "%";
+    };
+    const keepInside = () => {
+      const vw = view.clientWidth || 0, vh = view.clientHeight || 0;
+      const cw = w * z, ch = h * z;
+      const kx = Math.min(MM_KEEP, cw), ky = Math.min(MM_KEEP, ch);
+      tx = Math.min(vw - kx, Math.max(kx - cw, tx));
+      ty = Math.min(vh - ky, Math.max(ky - ch, ty));
+    };
+    const fit = () => {
+      const cw = view.clientWidth || 0, ch = view.clientHeight || 0;
+      if (!w || !cw)
+        return 1;
+      const byW = (cw - MM_PAD) / w;
+      const byH = ch && h ? (ch - MM_PAD) / h : Infinity;
+      return Math.min(2, byW, byH);
+    };
+    const reset = () => {
+      z = Math.min(MM_MAX, Math.max(MM_MIN, fit()));
+      tx = ((view.clientWidth || 0) - w * z) / 2;
+      ty = ((view.clientHeight || 0) - h * z) / 2;
+      draw();
+    };
+    const zoomAt = (factor, cx, cy) => {
+      const before = z;
+      z = Math.min(MM_MAX, Math.max(MM_MIN, z * factor));
+      const k = z / before;
+      tx = cx - (cx - tx) * k;
+      ty = cy - (cy - ty) * k;
+      keepInside();
+      draw();
+    };
+    const close = () => {
+      backdrop.remove();
+      document.removeEventListener("keydown", onKey);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape")
+        close();
+    };
+    controls.append(mkBtn("−", "", "Zoom out", () => {
+      zoomAt(1 / MM_STEP, (view.clientWidth || 0) / 2, (view.clientHeight || 0) / 2);
+    }), pct, mkBtn("+", "", "Zoom in", () => {
+      zoomAt(MM_STEP, (view.clientWidth || 0) / 2, (view.clientHeight || 0) / 2);
+    }), mkBtn("×", "mm-close", "Close", close));
+    pct.addEventListener("click", reset);
+    bar.append(label, controls);
+    card.append(bar, view);
+    backdrop.append(card);
+    document.body.append(backdrop);
+    view.title = "Scroll to zoom · Drag to pan";
+    reset();
+    wireStage(view, {
+      zoom: zoomAt,
+      pan: (dx, dy) => {
+        tx += dx;
+        ty += dy;
+        keepInside();
+        draw();
+      }
+    });
+    backdrop.addEventListener("click", (e) => {
+      if (e.target === backdrop)
+        close();
+    });
+    document.addEventListener("keydown", onKey);
+    card.focus();
+  }
+
   // web/src/mermaid.js
   var MERMAID_VERSION = "11.17.2";
   var MERMAID_URL = "/static/lib/mermaid/" + MERMAID_VERSION + "/mermaid.esm.min.mjs";
   var MAX_BLOCKS = 50;
   var MAX_CHARS = 2000;
+  var MM_LABEL_W = 200;
+  var MM_THEME_CSS = "foreignObject > div {" + " display: table !important;" + " white-space: break-spaces !important;" + " max-width: " + MM_LABEL_W + "px !important;" + " overflow-wrap: anywhere; }" + " g.cluster foreignObject > div {" + " display: table-cell !important;" + " white-space: nowrap !important;" + " max-width: none !important;" + " width: auto !important; }";
   var MD_MERMAID = 'pre[data-lang="mermaid"] > code';
   var mermaidPromise = null;
   var mermaidModule = null;
   var renderQueue = Promise.resolve();
   var svgSeq = 0;
-  var observer = null;
   var themeWatcher = null;
   var rendered = new Set;
   var snapshots = new WeakMap;
@@ -2049,6 +2261,9 @@
       theme: "base",
       layout: "dagre",
       suppressErrorRendering: true,
+      themeCSS: MM_THEME_CSS,
+      flowchart: { htmlLabels: true, wrappingWidth: MM_LABEL_W, subGraphTitleMargin: { top: 8, bottom: 16 } },
+      sequence: { wrap: true },
       darkMode: dark,
       themeVariables: {
         darkMode: dark,
@@ -2114,19 +2329,6 @@
   function enqueue(target) {
     renderQueue = renderQueue.then(() => renderTarget(target)).catch(() => {});
   }
-  function observe(pre) {
-    if (!observer) {
-      observer = new IntersectionObserver((entries) => {
-        for (const entry of entries) {
-          if (!entry.isIntersecting)
-            continue;
-          observer.unobserve(entry.target);
-          enqueue(entry.target);
-        }
-      }, { rootMargin: "600px 0px" });
-    }
-    observer.observe(pre);
-  }
   function note(pre, text, isErr) {
     let el = pre.nextElementSibling;
     if (!el || !el.classList || !el.classList.contains("md-mermaid-note")) {
@@ -2162,7 +2364,8 @@
     rendered.delete(target);
     const original = snapshots.get(target) || sourceBlock(src);
     target.replaceWith(original);
-    note(original, "Mermaid: " + (err && err.message ? String(err.message).split(`
+    const at = original.dataset.line ? " (line " + original.dataset.line + ")" : "";
+    note(original, "Mermaid" + at + ": " + (err && err.message ? String(err.message).split(`
 `)[0] : "render failed").slice(0, 140), true);
   }
   async function renderTarget(target) {
@@ -2194,95 +2397,6 @@
       return;
     mountDiagram(target, svg);
     rendered.add(target);
-  }
-  var MM_MIN = 0.25;
-  var MM_MAX = 4;
-  var MM_STEP = 1.25;
-  function mountDiagram(target, svgText) {
-    const view = document.createElement("div");
-    view.className = "mm-view";
-    const stage = document.createElement("div");
-    stage.className = "mm-stage";
-    stage.innerHTML = svgText;
-    view.append(stage);
-    const svg = stage.querySelector("svg");
-    const box = svg && svg.viewBox ? svg.viewBox.baseVal : null;
-    const w = box && box.width ? box.width : 0;
-    const h = box && box.height ? box.height : 0;
-    if (svg && w && h) {
-      svg.removeAttribute("style");
-      svg.style.maxWidth = "none";
-    }
-    const bar = document.createElement("div");
-    bar.className = "mm-bar";
-    const label = document.createElement("span");
-    label.className = "mm-label";
-    label.textContent = "mermaid";
-    const zoom = document.createElement("div");
-    zoom.className = "mm-zoom";
-    const pct = document.createElement("button");
-    pct.type = "button";
-    pct.className = "mm-pct";
-    pct.title = "Reset zoom to fit";
-    pct.setAttribute("aria-label", "Reset zoom to fit");
-    const mkBtn = (text, title, on) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "mm-btn";
-      b.textContent = text;
-      b.title = title;
-      b.setAttribute("aria-label", title);
-      b.addEventListener("click", on);
-      return b;
-    };
-    const fit = () => w && view.clientWidth ? Math.min(1, (view.clientWidth - 28) / w) : 1;
-    let z = 1;
-    const apply = (next) => {
-      z = Math.min(MM_MAX, Math.max(MM_MIN, next));
-      target.dataset.zoom = String(z);
-      if (svg && w && h) {
-        svg.setAttribute("width", String(Math.round(w * z)));
-        svg.setAttribute("height", String(Math.round(h * z)));
-      }
-      pct.textContent = Math.round(z * 100) + "%";
-    };
-    zoom.append(mkBtn("−", "Zoom out", () => apply(z / MM_STEP)), pct, mkBtn("+", "Zoom in", () => apply(z * MM_STEP)));
-    pct.addEventListener("click", () => apply(fit()));
-    bar.append(label, zoom);
-    const card = document.createElement("div");
-    card.className = "mm-card";
-    card.append(bar, view);
-    target.replaceChildren(card);
-    apply(Number(target.dataset.zoom) || fit());
-    view.addEventListener("wheel", (e) => {
-      if (!e.ctrlKey && !e.metaKey)
-        return;
-      e.preventDefault();
-      apply(z * (e.deltaY < 0 ? MM_STEP : 1 / MM_STEP));
-    }, { passive: false });
-    let pan = null;
-    view.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0)
-        return;
-      if (e.target !== view)
-        e.preventDefault();
-      pan = { x: e.clientX, y: e.clientY, l: view.scrollLeft, t: view.scrollTop };
-      view.classList.add("dragging");
-      if (view.setPointerCapture)
-        view.setPointerCapture(e.pointerId);
-    });
-    view.addEventListener("pointermove", (e) => {
-      if (!pan)
-        return;
-      view.scrollLeft = pan.l - (e.clientX - pan.x);
-      view.scrollTop = pan.t - (e.clientY - pan.y);
-    });
-    const endPan = () => {
-      pan = null;
-      view.classList.remove("dragging");
-    };
-    view.addEventListener("pointerup", endPan);
-    view.addEventListener("pointercancel", endPan);
   }
   function watchTheme() {
     if (themeWatcher)
@@ -2327,18 +2441,12 @@
         node.dataset.line = pre.dataset.line;
       snapshots.set(node, pre);
       pre.replaceWith(node);
-      observe(node);
+      enqueue(node);
     }
   }
   function forgetMermaid(root) {
     if (!root)
       return;
-    if (observer) {
-      for (const node of root.querySelectorAll(".md-mermaid"))
-        observer.unobserve(node);
-      for (const code of root.querySelectorAll(MD_MERMAID))
-        observer.unobserve(code.parentElement);
-    }
     for (const node of rendered) {
       if (!node.isConnected || root.contains(node))
         rendered.delete(node);
